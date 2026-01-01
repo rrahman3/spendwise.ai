@@ -1,0 +1,7 @@
+{
+  "name": "SpendWise AI Receipt Scanner",
+  "description": "A smart receipt management app that extracts purchase details using Gemini AI, tracks spending habits, and answers questions about your financial history.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
