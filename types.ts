@@ -19,6 +19,9 @@ export interface Receipt {
   createdAt: number;
   time?: string;
   hash?: string;
+  source: 'scan' | 'csv';
+  status: 'processed' | 'pending_review';
+  originalReceiptId?: string; // The ID of the receipt it is a duplicate of
 }
 
 export interface UserProfile {
@@ -31,7 +34,7 @@ export interface UserProfile {
   isAuthenticated: boolean;
 }
 
-export type View = 'dashboard' | 'scan' | 'history' | 'items' | 'chat' | 'profile';
+export type View = 'dashboard' | 'scan' | 'history' | 'items' | 'chat' | 'profile' | 'upload' | 'review';
 
 export interface ChatMessage {
   role: 'user' | 'model';

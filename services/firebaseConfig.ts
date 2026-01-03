@@ -11,22 +11,22 @@ const firebaseConfig = {
     appId: import.meta.env.VITE_APP_ID
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// Comprehensive check for all required Firebase config keys
+const missingKeys = Object.entries(firebaseConfig).filter(([key, value]) => !value);
 
-// Debugging: Check if config is loaded
-console.log("Environment Keys Loaded:", Object.keys(import.meta.env).filter(k => k.startsWith('VITE_')));
-
-if (!firebaseConfig.apiKey) {
-    console.error("Firebase API Key is missing! Check your .env.local file.");
-    console.error("Make sure your variable is named VITE_API_KEY");
-} else if (firebaseConfig.authDomain && !firebaseConfig.authDomain.includes('.')) {
-    console.error("CRITICAL ERROR: Your VITE_AUTH_DOMAIN seems invalid:", firebaseConfig.authDomain);
-    console.error("It should look like 'your-project.firebaseapp.com', but it looks like an API Key or ID.");
-    alert(`CONFIGURATION ERROR: Your VITE_AUTH_DOMAIN is incorrect.\n\nCurrent value: ${firebaseConfig.authDomain}\n\nIt should look like 'project-id.firebaseapp.com'.\nCheck your .env.local file.`);
-} else {
-    console.log("Firebase initialized with project:", firebaseConfig.projectId);
+if (missingKeys.length > 0) {
+    const missingKeyNames = missingKeys.map(([key]) => `VITE_${key.toUpperCase()}`).join(', ');
+    const errorMessage = `CRITICAL ERROR: Your .env.local file is missing the following required Firebase keys: ${missingKeyNames}. The app cannot start.`;
+    
+    console.error(errorMessage);
+    alert(errorMessage);
+    // Throw an error to halt execution completely
+    throw new Error(errorMessage);
 }
+
+// Initialize Firebase
+console.log("All Firebase keys are present. Initializing Firebase with project:", firebaseConfig.projectId);
+const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();

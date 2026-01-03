@@ -1,138 +1,265 @@
 
-import React, { useMemo } from 'react';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  PieChart, Pie, Cell 
-} from 'recharts';
+import React, { useState, useMemo } from 'react';
 import { Receipt } from '../types';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 
-interface DashboardProps {
-  receipts: Receipt[];
-  onScanClick?: () => void;
-}
+// --- Chart Components ---
+const ChartWrapper: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-[300px] flex flex-col">
+        <h4 className="font-semibold text-gray-800">{title}</h4>
+        <div className="flex-grow mt-4">
+            {children}
+        </div>
+    </div>
+);
 
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+const SpendingChart: React.FC<{ data: any[] }> = ({ data }) => (
+    <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+            <XAxis dataKey="name" stroke="#9CA3AF" fontSize={12} tickLine={false} axisLine={false} />
+            <YAxis stroke="#9CA3AF" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
+            <Tooltip cursor={{fill: '#F3F4F6'}} contentStyle={{ borderRadius: '12px', borderColor: '#E5E7EB' }} />
+            <Bar dataKey="spend" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+        </BarChart>
+    </ResponsiveContainer>
+);
 
-const Dashboard: React.FC<DashboardProps> = ({ receipts, onScanClick }) => {
-  const stats = useMemo(() => {
-    const total = receipts.reduce((sum, r) => sum + r.total, 0);
-    const lastMonth = receipts.filter(r => {
-      const date = new Date(r.date);
-      const now = new Date();
-      return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
-    }).reduce((sum, r) => sum + r.total, 0);
+const CategoryChart: React.FC<{ data: any[] }> = ({ data }) => {
+    const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+    return (
+        <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+                <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={80} fill="#8884d8" paddingAngle={5}>
+                    {data.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                </Pie>
+                <Tooltip formatter={(value: number) => `$${value.toFixed(2)}`} />
+                <Legend iconType="circle" />
+            </PieChart>
+        </ResponsiveContainer>
+    );
+};
 
-    const categoryDataMap: Record<string, number> = {};
-    receipts.forEach(r => {
-      r.items.forEach(item => {
-        const cat = item.category || 'Other';
-        categoryDataMap[cat] = (categoryDataMap[cat] || 0) + (item.price * item.quantity);
-      });
+
+// --- Helper Components ---
+const PeriodToggle: React.FC<{ view: 'monthly' | 'yearly'; setView: (view: 'monthly' | 'yearly') => void }> = ({ view, setView }) => (
+    <div className="flex items-center bg-gray-200 rounded-full p-1">
+        <button onClick={() => setView('monthly')} className={`px-4 py-1.5 text-sm font-semibold rounded-full ${view === 'monthly' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-600'}`}>
+            Monthly
+        </button>
+        <button onClick={() => setView('yearly')} className={`px-4 py-1.5 text-sm font-semibold rounded-full ${view === 'yearly' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-600'}`}>
+            Yearly
+        </button>
+    </div>
+);
+
+const DatePicker: React.FC<{
+    periodView: 'monthly' | 'yearly';
+    availableYears: number[];
+    availableMonths: string[];
+    selectedYear: number;
+    selectedMonth: string;
+    onYearChange: (year: number) => void;
+    onMonthChange: (month: string) => void;
+}> = ({ periodView, availableYears, availableMonths, selectedYear, selectedMonth, onYearChange, onMonthChange }) => (
+    <div className="flex items-center space-x-2">
+        {periodView === 'monthly' && (
+            <select 
+                value={selectedMonth}
+                onChange={(e) => onMonthChange(e.target.value)}
+                className="bg-white border border-gray-300 rounded-full text-sm font-medium py-2 px-4 appearance-none"
+            >
+                {availableMonths.map(month => <option key={month} value={month}>{month}</option>)}
+            </select>
+        )}
+        <select 
+            value={selectedYear}
+            onChange={(e) => onYearChange(parseInt(e.target.value))}
+            className="bg-white border border-gray-300 rounded-full text-sm font-medium py-2 px-4 appearance-none"
+        >
+            {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
+        </select>
+    </div>
+);
+
+// --- Data Processing Utilities ---
+const processReceiptData = (receipts: Receipt[], periodView: 'monthly' | 'yearly', selectedYear: number, selectedMonth: string) => {
+    const monthIndex = new Date(Date.parse(selectedMonth +" 1, 2012")).getMonth();
+    const filtered = receipts.filter(r => {
+        const date = new Date(r.date);
+        if (isNaN(date.getTime())) return false;
+        const yearMatches = date.getFullYear() === selectedYear;
+        const monthMatches = date.getMonth() === monthIndex;
+        return periodView === 'yearly' ? yearMatches : (yearMatches && monthMatches);
     });
 
-    const categoryData = Object.entries(categoryDataMap).map(([name, value]) => ({ name, value }));
+    const totalSpend = filtered.reduce((sum, r) => sum + r.total, 0);
+    const merchantSpend = new Map<string, number>();
+    const categorySpend = new Map<string, number>();
+    const spendingTrendData = new Map<string, number>();
 
-    const historyData = receipts
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-      .slice(-10)
-      .map(r => ({
-        date: r.date,
-        total: r.total
-      }));
+    filtered.forEach(r => {
+        const store = r.storeName?.trim().toUpperCase() || 'UNKNOWN';
+        merchantSpend.set(store, (merchantSpend.get(store) || 0) + r.total);
 
-    return { total, lastMonth, categoryData, historyData };
-  }, [receipts]);
+        r.items?.forEach(item => {
+            const category = item.category?.trim().toUpperCase() || 'UNCATEGORIZED';
+            categorySpend.set(category, (categorySpend.get(category) || 0) + item.price);
+        });
 
-  return (
-    <div className="space-y-6">
-      {/* Quick Actions / Welcome */}
-      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-[2rem] p-8 text-white shadow-xl shadow-blue-100 flex flex-col md:flex-row justify-between items-center gap-6">
-        <div className="space-y-2 text-center md:text-left">
-          <h2 className="text-3xl font-black">Ready to scan?</h2>
-          <p className="text-blue-100 font-medium">Capture a receipt and let Gemini do the math for you.</p>
-        </div>
-        <button 
-          onClick={onScanClick}
-          className="bg-white text-blue-600 px-8 py-4 rounded-2xl font-bold text-lg shadow-lg hover:bg-blue-50 transition-all active:scale-95 flex items-center space-x-2"
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-          <span>Scan Receipt</span>
-        </button>
-      </div>
+        const date = new Date(r.date);
+        if (periodView === 'monthly') {
+            const day = date.getDate().toString();
+            spendingTrendData.set(day, (spendingTrendData.get(day) || 0) + r.total);
+        } else {
+            const monthName = date.toLocaleString('default', { month: 'short' });
+            spendingTrendData.set(monthName, (spendingTrendData.get(monthName) || 0) + r.total);
+        }
+    });
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <p className="text-sm text-gray-500 font-medium">Total Lifetime Spend</p>
-          <h3 className="text-3xl font-bold text-gray-900 mt-1">${stats.total.toFixed(2)}</h3>
-          <div className="mt-2 text-xs text-green-600 bg-green-50 inline-block px-2 py-1 rounded">
-            Across {receipts.length} receipts
-          </div>
-        </div>
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <p className="text-sm text-gray-500 font-medium">Spending This Month</p>
-          <h3 className="text-3xl font-bold text-gray-900 mt-1">${stats.lastMonth.toFixed(2)}</h3>
-          <p className="mt-2 text-xs text-gray-400">Updates in real-time</p>
-        </div>
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <p className="text-sm text-gray-500 font-medium">Average per Receipt</p>
-          <h3 className="text-3xl font-bold text-gray-900 mt-1">
-            ${receipts.length ? (stats.total / receipts.length).toFixed(2) : '0.00'}
-          </h3>
-          <p className="mt-2 text-xs text-gray-400">Based on all scans</p>
-        </div>
-      </div>
+    const topMerchants = Array.from(merchantSpend.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([name, value]) => ({ name, value }));
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-[400px]">
-          <h4 className="text-lg font-semibold mb-6">Spending by Category</h4>
-          <ResponsiveContainer width="100%" height="80%">
-            <PieChart>
-              <Pie
-                data={stats.categoryData}
-                cx="50%"
-                cy="50%"
-                innerRadius={60}
-                outerRadius={80}
-                paddingAngle={5}
-                dataKey="value"
-              >
-                {stats.categoryData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="flex flex-wrap justify-center gap-4 mt-4 text-xs font-medium">
-            {stats.categoryData.map((d, i) => (
-              <div key={d.name} className="flex items-center">
-                <div className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: COLORS[i % COLORS.length] }}></div>
-                <span>{d.name}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+    const topCategories = Array.from(categorySpend.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([name, value]) => ({ name, value }));
 
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-[400px]">
-          <h4 className="text-lg font-semibold mb-6">Recent Spending Trend</h4>
-          <ResponsiveContainer width="100%" height="80%">
-            <BarChart data={stats.historyData}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-              <XAxis dataKey="date" fontSize={10} stroke="#9ca3af" />
-              <YAxis fontSize={10} stroke="#9ca3af" />
-              <Tooltip 
-                contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-              />
-              <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+    let formattedSpendingTrend;
+    if (periodView === 'yearly') {
+        const monthOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        formattedSpendingTrend = monthOrder.map(month => ({
+            name: month,
+            spend: spendingTrendData.get(month) || 0
+        }));
+    } else {
+        const daysInMonth = new Date(selectedYear, monthIndex + 1, 0).getDate();
+        formattedSpendingTrend = Array.from({ length: daysInMonth }, (_, i) => {
+            const day = (i + 1).toString();
+            return {
+                name: day,
+                spend: spendingTrendData.get(day) || 0
+            }
+        });
+    }
+
+    const daysWithSpend = new Set(filtered.map(r => new Date(r.date).toDateString())).size;
+    const dailyAvg = daysWithSpend > 0 ? totalSpend / daysWithSpend : 0;
+
+    return { totalSpend, topMerchants, topCategories, filteredReceipts: filtered, spendingTrend: formattedSpendingTrend, dailyAvg };
+};
+
+
+// --- Main Dashboard Component ---
+interface DashboardProps {
+    receipts: Receipt[];
+    onScanClick?: () => void;
+}
+
+const Dashboard: React.FC<DashboardProps> = ({ receipts, onScanClick }) => {
+    const [periodView, setPeriodView] = useState<'monthly' | 'yearly'>('monthly');
+
+    const { availableYears, availableMonths, mostRecentYear, mostRecentMonth } = useMemo(() => {
+        if (receipts.length === 0) {
+            const currentYear = new Date().getFullYear();
+            const currentMonth = new Date().toLocaleString('default', { month: 'long' });
+            return { availableYears: [currentYear], availableMonths: [currentMonth], mostRecentYear: currentYear, mostRecentMonth: currentMonth };
+        }
+
+        const yearSet = new Set<number>();
+        let mostRecentDate = new Date(0);
+        receipts.forEach(r => {
+            try {
+                const date = new Date(r.date);
+                if (!isNaN(date.getTime())) {
+                    yearSet.add(date.getFullYear());
+                    if (date > mostRecentDate) mostRecentDate = date;
+                }
+            } catch(e) {}
+        });
+
+        const sortedYears = Array.from(yearSet).sort((a, b) => b - a);
+        return {
+            availableYears: sortedYears.length > 0 ? sortedYears : [new Date().getFullYear()],
+            availableMonths: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
+            mostRecentYear: mostRecentDate.getFullYear(),
+            mostRecentMonth: mostRecentDate.toLocaleString('default', { month: 'long' })
+        };
+    }, [receipts]);
+
+    const [selectedYear, setSelectedYear] = useState(mostRecentYear);
+    const [selectedMonth, setSelectedMonth] = useState(mostRecentMonth);
+
+    const { totalSpend, topMerchants, topCategories, filteredReceipts, spendingTrend, dailyAvg } = 
+        processReceiptData(receipts, periodView, selectedYear, selectedMonth);
+
+    const bannerTitle = periodView === 'monthly' ? `${selectedMonth} ${selectedYear}` : `${selectedYear}`;
+
+    return (
+        <div className="space-y-8">
+            {/* Header */}
+            <div className="flex flex-wrap justify-between items-center gap-4">
+                <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+                <div className="flex items-center gap-4">
+                    <PeriodToggle view={periodView} setView={setPeriodView} />
+                    <DatePicker 
+                        periodView={periodView}
+                        availableYears={availableYears}
+                        availableMonths={availableMonths}
+                        selectedYear={selectedYear}
+                        selectedMonth={selectedMonth}
+                        onYearChange={setSelectedYear}
+                        onMonthChange={setSelectedMonth}
+                    />
+                </div>
+            </div>
+
+            {/* Summary Banner */}
+            <div className="bg-gradient-to-br from-[#1E3A8A] to-[#3B82F6] rounded-3xl p-8 text-white shadow-lg flex justify-between items-start">
+                <div>
+                    <p className="text-blue-200 text-lg">Total Spend for {bannerTitle}</p>
+                    <h2 className="text-5xl font-bold mt-2">{`$${totalSpend.toFixed(2)}`}</h2>
+                    <p className="text-blue-200 mt-4 max-w-md">{filteredReceipts.length} receipts analyzed for this period.</p>
+                </div>
+                <div className="text-right">
+                    <p className="text-lg font-medium">Daily Average</p>
+                    <p className="text-3xl font-bold">{`$${dailyAvg.toFixed(2)}`}</p>
+                </div>
+            </div>
+
+            {/* Main Charts & Lists Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div className="lg:col-span-2">
+                    <ChartWrapper title="Spending Trend">
+                         <SpendingChart data={spendingTrend} />
+                    </ChartWrapper>
+                </div>
+                <div className="lg:col-span-1">
+                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                        <h4 className="font-semibold text-gray-800">Top Merchants</h4>
+                        {topMerchants.length > 0 ? (
+                            <div className="mt-4 space-y-3">
+                                {topMerchants.map(({ name, value }) => (
+                                    <div key={name} className="flex justify-between items-center">
+                                        <span className="text-sm font-medium text-gray-700">{name}</span>
+                                        <span className="text-sm font-bold text-gray-900">{`$${value.toFixed(2)}`}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : <div className="mt-4 text-center text-gray-400">No merchant data</div>}
+                    </div>
+                </div>
+            </div>
+             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div className="lg:col-span-2">
+                    <ChartWrapper title="Category Breakdown">
+                        <CategoryChart data={topCategories} />
+                    </ChartWrapper>
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
-  );
+    );
 };
 
 export default Dashboard;

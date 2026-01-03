@@ -1,28 +1,71 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Receipt } from '../types';
 import EditModal from './EditModal';
+
+type SortKey = 'storeName' | 'total' | 'date';
 
 interface PurchaseHistoryProps {
   receipts: Receipt[];
   onScanClick?: () => void;
   onUpdateReceipt: (updated: Receipt) => void;
   onDeleteReceipt: (receiptId: string) => void;
+  onReviewClick: () => void;
+  receiptsToReviewCount: number;
 }
 
-const PurchaseHistory: React.FC<PurchaseHistoryProps> = ({ receipts, onScanClick, onUpdateReceipt, onDeleteReceipt }) => {
+const PurchaseHistory: React.FC<PurchaseHistoryProps> = ({ receipts, onScanClick, onUpdateReceipt, onDeleteReceipt, onReviewClick, receiptsToReviewCount }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>('date');
+  const [sortAsc, setSortAsc] = useState(false); // Sort descending by default
 
-  const filteredReceipts = receipts
-    .filter(r =>
+  const sortedAndFilteredReceipts = useMemo(() => {
+    const filtered = receipts.filter(r =>
       r.storeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       r.items.some(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()))
-    )
-    .sort((a, b) => b.createdAt - a.createdAt);
+    );
 
-  if (receipts.length === 0) {
+    return filtered.sort((a, b) => {
+      let compareA, compareB;
+
+      switch (sortKey) {
+        case 'storeName':
+          compareA = a.storeName.toLowerCase();
+          compareB = b.storeName.toLowerCase();
+          break;
+        case 'total':
+          compareA = a.total;
+          compareB = b.total;
+          break;
+        case 'date':
+        default:
+          compareA = new Date(a.date).getTime();
+          compareB = new Date(b.date).getTime();
+          break;
+      }
+
+      if (compareA < compareB) {
+        return sortAsc ? -1 : 1;
+      }
+      if (compareA > compareB) {
+        return sortAsc ? 1 : -1;
+      }
+      return 0;
+    });
+  }, [receipts, searchTerm, sortKey, sortAsc]);
+
+  const handleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortAsc(!sortAsc);
+    } else {
+      setSortKey(key);
+      setSortAsc(key === 'storeName'); // Default to A-Z for store name
+    }
+  };
+
+  if (receipts.length === 0 && receiptsToReviewCount === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[500px] text-center space-y-6">
         <div className="w-24 h-24 bg-blue-50 rounded-full flex items-center justify-center text-blue-500">
@@ -49,24 +92,54 @@ const PurchaseHistory: React.FC<PurchaseHistoryProps> = ({ receipts, onScanClick
     setSelectedReceipt(updated);
     setIsEditing(false);
   };
+  
+  const getSortIcon = (key: SortKey) => {
+    if (key !== sortKey) return '↕';
+    return sortAsc ? '↑' : '↓';
+  };
 
   return (
     <div className="space-y-6 pb-20">
-      <div className="relative">
-        <input
-          type="text"
-          placeholder="Search stores or items..."
-          className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all shadow-sm"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
-        <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
+      {receiptsToReviewCount > 0 && (
+        <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-lg flex justify-between items-center shadow-md">
+          <div>
+            <p className="font-bold">You have {receiptsToReviewCount} potential duplicate(s) to review.</p>
+          </div>
+          <button
+            onClick={onReviewClick}
+            className="bg-yellow-500 text-white px-4 py-2 rounded-lg font-bold hover:bg-yellow-600 transition-all active:scale-95 shadow-sm"
+          >
+            Review Now
+          </button>
+        </div>
+      )}
+      <div className="flex flex-col sm:flex-row gap-4">
+        <div className="relative flex-grow">
+          <input
+            type="text"
+            placeholder="Search stores or items..."
+            className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all shadow-sm"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
+        <div className="flex-shrink-0 flex gap-2 bg-white p-2 rounded-2xl border border-gray-200 shadow-sm">
+          {(['date', 'storeName', 'total'] as SortKey[]).map(key => (
+              <button 
+                key={key}
+                onClick={() => handleSort(key)}
+                className={`px-4 py-1.5 text-sm font-bold rounded-lg transition-colors ${sortKey === key ? 'bg-blue-500 text-white' : 'bg-transparent text-gray-500 hover:bg-gray-100'}`}>
+                {key.charAt(0).toUpperCase() + key.slice(1)} {getSortIcon(key)}
+              </button>
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredReceipts.map(receipt => (
+        {sortedAndFilteredReceipts.map(receipt => (
           <div
             key={receipt.id}
             onClick={() => setSelectedReceipt(receipt)}
