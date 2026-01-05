@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getFunctions, connectFunctionsEmulator } from "firebase/functions";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -15,9 +16,13 @@ const firebaseConfig = {
 const missingKeys = Object.entries(firebaseConfig).filter(([key, value]) => !value);
 
 if (missingKeys.length > 0) {
-    const missingKeyNames = missingKeys.map(([key]) => `VITE_${key.toUpperCase()}`).join(', ');
+    const missingKeyNames = missingKeys.map(([key]) => {
+        // Convert camelCase to SNAKE_CASE for the error message (e.g. apiKey -> API_KEY)
+        const snakedKey = key.replace(/[A-Z]/g, letter => `_${letter}`).toUpperCase();
+        return `VITE_${snakedKey}`;
+    }).join(', ');
     const errorMessage = `CRITICAL ERROR: Your .env.local file is missing the following required Firebase keys: ${missingKeyNames}. The app cannot start.`;
-    
+
     console.error(errorMessage);
     alert(errorMessage);
     // Throw an error to halt execution completely
@@ -31,3 +36,10 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 export const db = getFirestore(app);
+export const functions = getFunctions(app);
+
+// Use the local emulator when running `firebase emulators:start --only functions`
+const emulatorPort = import.meta.env.VITE_FUNCTIONS_EMULATOR_PORT;
+if (import.meta.env.DEV && emulatorPort) {
+    connectFunctionsEmulator(functions, "localhost", Number(emulatorPort));
+}

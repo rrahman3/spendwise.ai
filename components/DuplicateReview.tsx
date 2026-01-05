@@ -66,6 +66,11 @@ interface DuplicateReviewProps {
 const DuplicateReview: React.FC<DuplicateReviewProps> = ({ receiptsToReview, allReceipts, onResolve, onFinished, onEdit }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
 
+  // Reset to first item when the review list changes
+  React.useEffect(() => {
+    setCurrentIndex(0);
+  }, [receiptsToReview.length]);
+
   const receiptMap = useMemo(() => {
     const map = new Map<string, Receipt>();
     allReceipts.forEach(r => map.set(r.id, r));
@@ -98,15 +103,20 @@ const DuplicateReview: React.FC<DuplicateReviewProps> = ({ receiptsToReview, all
     }
   };
 
-  const handleResolve = (action: 'merge' | 'keep' | 'delete') => {
-    if (original) {
-      onResolve(action, original, duplicate);
-      // After resolving, if it was the last one, finish. Otherwise, go to the next one.
-      if (currentIndex >= receiptsToReview.length - 1) {
-          onFinished();
-      } 
-    } else {
+  const handleResolve = async (action: 'merge' | 'keep' | 'delete') => {
+    if (!original) {
         alert("Error: The original receipt could not be found. Cannot resolve this duplicate.");
+        return;
+    }
+
+    await onResolve(action, original, duplicate);
+
+    // Advance to next review item if available, otherwise finish
+    const nextIndex = currentIndex + 1;
+    if (nextIndex < receiptsToReview.length) {
+        setCurrentIndex(nextIndex);
+    } else {
+        onFinished();
     }
   };
 

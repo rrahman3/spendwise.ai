@@ -13,43 +13,88 @@ interface ItemWithMetadata extends ReceiptItem {
   receiptId: string;
   storeName: string;
   date: string;
+  year: number;
+  itemIndex: number;
 }
 
 const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [yearFilter, setYearFilter] = useState<number | 'all'>('all');
+  const [sortKey, setSortKey] = useState<'date' | 'price' | 'store' | 'category' | 'quantity'>('date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
   const [editingReceipt, setEditingReceipt] = useState<Receipt | null>(null);
 
   const allItems = useMemo(() => {
     const items: ItemWithMetadata[] = [];
     receipts.forEach(r => {
+      const receiptDate = new Date(r.date);
       r.items.forEach((i, idx) => {
         items.push({
           ...i,
           id: `${r.id}-${idx}`,
           receiptId: r.id,
           storeName: r.storeName,
-          date: r.date
+          date: r.date,
+          year: receiptDate.getFullYear(),
+          itemIndex: idx
         });
       });
     });
     return items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [receipts]);
 
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    allItems.forEach(i => i.category && set.add(i.category));
+    return ['all', ...Array.from(set).sort((a, b) => a.localeCompare(b))];
+  }, [allItems]);
+
+  const yearOptions = useMemo(() => {
+    const set = new Set<number>();
+    receipts.forEach(r => {
+      const year = new Date(r.date).getFullYear();
+      if (!isNaN(year)) set.add(year);
+    });
+    return ['all', ...Array.from(set).sort((a, b) => b - a)] as Array<number | 'all'>;
+  }, [receipts]);
+
   const filteredItems = useMemo(() => {
-    return allItems.filter(item => 
-      item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.category?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.storeName.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [allItems, searchTerm]);
+    const term = searchTerm.toLowerCase();
+    return allItems
+      .filter(item => {
+        const matchesTerm =
+          item.name.toLowerCase().includes(term) ||
+          item.category?.toLowerCase().includes(term) ||
+          item.storeName.toLowerCase().includes(term);
+        const matchesCategory = categoryFilter === 'all' ? true : item.category === categoryFilter;
+        const matchesYear = yearFilter === 'all' ? true : item.year === yearFilter;
+        return matchesTerm && matchesCategory && matchesYear;
+      })
+      .sort((a, b) => {
+        const dir = sortDir === 'asc' ? 1 : -1;
+        switch (sortKey) {
+          case 'store':
+            return dir * a.storeName.localeCompare(b.storeName);
+          case 'category':
+            return dir * (a.category || '').localeCompare(b.category || '');
+          case 'price':
+            return dir * ((a.price * a.quantity) - (b.price * b.quantity));
+          case 'quantity':
+            return dir * (a.quantity - b.quantity);
+          default:
+            return dir * (new Date(a.date).getTime() - new Date(b.date).getTime());
+        }
+      });
+  }, [allItems, categoryFilter, yearFilter, searchTerm, sortDir, sortKey]);
 
   const handleDeleteItem = (item: ItemWithMetadata) => {
     const parent = receipts.find(r => r.id === item.receiptId);
     if (!parent) return;
 
     if (window.confirm(`Remove "${item.name}" from your records? This will update the receipt total.`)) {
-      const updatedItems = parent.items.filter(i => i.name !== item.name || i.price !== item.price);
+      const updatedItems = parent.items.filter((_, idx) => idx !== item.itemIndex);
       const updatedTotal = updatedItems.reduce((sum, i) => sum + (i.price * i.quantity), 0);
       
       onUpdateReceipt({
@@ -72,20 +117,62 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
 
   return (
     <div className="space-y-6 pb-20">
-      <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-        <div className="relative flex-1 w-full">
-          <input
-            type="text"
-            placeholder="Search items, categories, or stores..."
-            className="w-full pl-12 pr-4 py-4 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all shadow-sm font-medium"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-          <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col md:flex-row gap-4 items-center">
+          <div className="relative flex-1 w-full">
+            <input
+              type="text"
+              placeholder="Search items, categories, or stores..."
+              className="w-full pl-12 pr-4 py-4 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all shadow-sm font-medium"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="w-full md:w-auto px-4 py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              {categoryOptions.map(cat => (
+                <option key={cat} value={cat}>{cat === 'all' ? 'All categories' : cat}</option>
+              ))}
+            </select>
+            <select
+              value={yearFilter}
+              onChange={(e) => setYearFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+              className="w-full md:w-auto px-4 py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              {yearOptions.map(year => (
+                <option key={year} value={year}>{year === 'all' ? 'All years' : year}</option>
+              ))}
+            </select>
+            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-2xl px-2 py-1">
+              <select
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as typeof sortKey)}
+                className="bg-transparent text-sm font-medium focus:outline-none"
+              >
+                <option value="date">Date</option>
+                <option value="price">Total Price</option>
+                <option value="store">Store</option>
+                <option value="category">Category</option>
+                <option value="quantity">Quantity</option>
+              </select>
+              <button
+                onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                className="px-2 py-1 text-xs font-semibold text-gray-600 hover:text-blue-600"
+                title="Toggle sort direction"
+              >
+                {sortDir === 'asc' ? '↑' : '↓'}
+              </button>
+            </div>
+          </div>
         </div>
-        <div className="bg-blue-50 px-4 py-2 rounded-xl border border-blue-100">
+        <div className="bg-blue-50 px-4 py-2 rounded-xl border border-blue-100 inline-flex w-fit">
            <span className="text-xs font-black text-blue-600 uppercase tracking-widest">{filteredItems.length} Items Tracked</span>
         </div>
       </div>

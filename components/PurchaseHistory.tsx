@@ -20,12 +20,19 @@ const PurchaseHistory: React.FC<PurchaseHistoryProps> = ({ receipts, onScanClick
   const [isEditing, setIsEditing] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortAsc, setSortAsc] = useState(false); // Sort descending by default
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'scan' | 'csv' | 'manual'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'processed' | 'pending_review'>('all');
 
   const sortedAndFilteredReceipts = useMemo(() => {
-    const filtered = receipts.filter(r =>
-      r.storeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      r.items.some(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
+    const filtered = receipts.filter(r => {
+      const receiptStatus = r.status ?? 'processed';
+      const matchesSearch =
+        r.storeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        r.items.some(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()));
+      const matchesSource = sourceFilter === 'all' ? true : r.source === sourceFilter;
+      const matchesStatus = statusFilter === 'all' ? true : receiptStatus === statusFilter;
+      return matchesSearch && matchesSource && matchesStatus;
+    });
 
     return filtered.sort((a, b) => {
       let compareA, compareB;
@@ -138,19 +145,56 @@ const PurchaseHistory: React.FC<PurchaseHistoryProps> = ({ receipts, onScanClick
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-2">
+        <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-2xl border border-gray-200 shadow-sm">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Source</span>
+          {(['all','scan','csv','manual'] as const).map(s => (
+            <button
+              key={s}
+              onClick={() => setSourceFilter(s)}
+              className={`px-3 py-1 rounded-full text-xs font-bold transition ${sourceFilter === s ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-2xl border border-gray-200 shadow-sm">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Status</span>
+          {(['all','processed','pending_review'] as const).map(s => (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1 rounded-full text-xs font-bold transition ${statusFilter === s ? 'bg-emerald-100 text-emerald-700' : 'text-gray-600 hover:bg-gray-100'}`}
+            >
+              {s.replace('_',' ')}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {sortedAndFilteredReceipts.map(receipt => (
           <div
             key={receipt.id}
-            onClick={() => setSelectedReceipt(receipt)}
-            className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer group"
+            onClick={() => { setSelectedReceipt(receipt); setIsEditing(true); }}
+            className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer group relative overflow-hidden"
           >
             <div className="flex justify-between items-start mb-4">
               <div>
                 <h4 className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{receipt.storeName}</h4>
                 <p className="text-xs text-gray-500">{new Date(receipt.date).toLocaleDateString()}</p>
               </div>
-              <span className="text-lg font-bold text-gray-900">${receipt.total.toFixed(2)}</span>
+              <div className="flex flex-col items-end gap-1">
+                <span className="text-lg font-bold text-gray-900">${receipt.total.toFixed(2)}</span>
+                <div className="flex gap-1">
+                  <span className="text-[10px] uppercase tracking-wider font-black px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{receipt.source}</span>
+                  <span className={`text-[10px] uppercase tracking-wider font-black px-2 py-0.5 rounded-full ${
+                    (receipt.status ?? 'processed') === 'pending_review' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+                  }`}>
+                    {(receipt.status ?? 'processed').replace('_',' ')}
+                  </span>
+                </div>
+              </div>
             </div>
 
             <div className="flex gap-2 mb-4">
@@ -168,6 +212,23 @@ const PurchaseHistory: React.FC<PurchaseHistoryProps> = ({ receipts, onScanClick
               </svg>
               Scanned {new Date(receipt.createdAt).toLocaleDateString()}
             </div>
+            <div className="absolute inset-x-0 bottom-3 px-5 flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition">
+              <button
+                onClick={(e) => { e.stopPropagation(); setSelectedReceipt(receipt); setIsEditing(true); }}
+                className="px-3 py-1.5 text-xs font-bold rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100"
+              >
+                Edit
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm("Delete this receipt?")) onDeleteReceipt(receipt.id);
+                }}
+                className="px-3 py-1.5 text-xs font-bold rounded-full bg-red-50 text-red-600 hover:bg-red-100"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         ))}
 
@@ -184,7 +245,7 @@ const PurchaseHistory: React.FC<PurchaseHistoryProps> = ({ receipts, onScanClick
         </div>
       </div>
 
-      {selectedReceipt && (
+      {selectedReceipt && !isEditing && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col animate-in zoom-in-95">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">

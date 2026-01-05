@@ -1,6 +1,7 @@
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Receipt, ReceiptItem } from '../types';
+import ImageCropperModal from './ImageCropperModal';
 
 interface EditModalProps {
   receipt: Receipt;
@@ -10,6 +11,9 @@ interface EditModalProps {
 
 const EditModal: React.FC<EditModalProps> = ({ receipt, onSave, onClose }) => {
   const [formData, setFormData] = useState<Receipt>({ ...receipt });
+  const [imageError, setImageError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isCropping, setIsCropping] = useState(false);
 
   const updateItem = (index: number, field: keyof ReceiptItem, value: any) => {
     const newItems = [...formData.items];
@@ -28,7 +32,58 @@ const EditModal: React.FC<EditModalProps> = ({ receipt, onSave, onClose }) => {
     });
   };
 
+  const resizeImage = (base64Str: string, maxWidth = 1200, maxHeight = 1200): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.src = base64Str;
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxWidth) {
+            height *= maxWidth / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width *= maxHeight / height;
+            height = maxHeight;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Failed to get canvas context'));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        resolve(dataUrl);
+      };
+      img.onerror = (e) => reject(e);
+    });
+  };
+
+  const handleImageChange = async (file: File) => {
+    setImageError(null);
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve) => {
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+      const resized = await resizeImage(base64);
+      setFormData(prev => ({ ...prev, imageUrl: resized }));
+    } catch (err) {
+      console.error(err);
+      setImageError('Could not process that image. Try another photo.');
+    }
+  };
+
   return (
+    <>
     <div className="fixed inset-0 bg-gray-900/90 backdrop-blur-2xl z-[70] flex items-center justify-center p-6">
       <div className="bg-white w-full max-w-7xl h-[94vh] rounded-[4rem] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-500">
         <div className="p-10 border-b border-gray-100 flex justify-between items-center bg-white">
@@ -46,7 +101,58 @@ const EditModal: React.FC<EditModalProps> = ({ receipt, onSave, onClose }) => {
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
           <div className="w-full lg:w-1/2 bg-gray-50 p-12 flex items-center justify-center overflow-hidden">
              <div className="w-full h-full flex items-center justify-center bg-white rounded-[3rem] shadow-inner p-8 overflow-auto border border-gray-100">
-                <img src={receipt.imageUrl} alt="Original Record" className="max-w-full h-auto rounded-xl shadow-2xl" />
+                {formData.imageUrl ? (
+                  <div className="relative w-full h-full flex items-center justify-center">
+                    <img src={formData.imageUrl} alt="Receipt" className="max-w-full h-auto rounded-xl shadow-2xl" />
+                    <div className="absolute top-4 right-4 flex gap-2">
+                      <button
+                        onClick={() => setFormData(prev => ({ ...prev, imageUrl: undefined }))}
+                        className="px-3 py-2 bg-white/90 border border-gray-200 text-gray-600 text-xs font-semibold rounded-xl hover:bg-white"
+                      >
+                        Remove
+                      </button>
+                      <button
+                        onClick={() => setIsCropping(true)}
+                        className="px-3 py-2 bg-gray-900 text-white text-xs font-black rounded-xl shadow-sm hover:bg-gray-800"
+                      >
+                        Crop
+                      </button>
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="px-3 py-2 bg-blue-600 text-white text-xs font-black rounded-xl shadow-sm hover:bg-blue-700"
+                      >
+                        Replace
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center space-y-4 text-center">
+                    <div className="w-24 h-24 rounded-3xl bg-gray-100 flex items-center justify-center">
+                      <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-gray-700">No receipt photo yet</p>
+                      <p className="text-xs text-gray-500 font-semibold">Add a photo now or leave it empty.</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="px-4 py-2 bg-blue-600 text-white text-xs font-black rounded-xl shadow-sm hover:bg-blue-700"
+                      >
+                        Attach photo
+                      </button>
+                      <button
+                        onClick={() => setFormData(prev => ({ ...prev, imageUrl: undefined }))}
+                        className="px-4 py-2 border border-gray-200 text-gray-600 text-xs font-semibold rounded-xl hover:bg-gray-50"
+                      >
+                        Add later
+                      </button>
+                    </div>
+                    {imageError && <p className="text-xs text-red-500 font-semibold">{imageError}</p>}
+                  </div>
+                )}
              </div>
           </div>
 
@@ -142,6 +248,28 @@ const EditModal: React.FC<EditModalProps> = ({ receipt, onSave, onClose }) => {
         </div>
       </div>
     </div>
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept="image/*"
+      className="hidden"
+      onChange={(e) => {
+        const file = e.target.files?.[0];
+        if (file) handleImageChange(file);
+        e.target.value = '';
+      }}
+    />
+    {isCropping && formData.imageUrl && (
+      <ImageCropperModal
+        imageUrl={formData.imageUrl}
+        onCancel={() => setIsCropping(false)}
+        onSave={(cropped) => {
+          setFormData(prev => ({ ...prev, imageUrl: cropped }));
+          setIsCropping(false);
+        }}
+      />
+    )}
+    </>
   );
 };
 

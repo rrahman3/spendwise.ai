@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { extractReceiptData } from '../services/geminiService';
 import { Receipt } from '../types';
 import EditModal from './EditModal';
+import ManualReceiptModal from './ManualReceiptModal';
 
 interface ReceiptScannerProps {
   onReceiptProcessed: (receipt: Receipt) => void;
@@ -22,7 +23,9 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
   const [queue, setQueue] = useState<QueuedItem[]>([]);
   const [isAnyProcessing, setIsAnyProcessing] = useState(false);
   const [editingItem, setEditingItem] = useState<QueuedItem | null>(null);
+  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const resizeImage = (base64Str: string, maxWidth = 1200, maxHeight = 1200): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -71,6 +74,7 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
 
     setQueue(prev => [...prev, ...newItems]);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
 
   const processQueue = async () => {
@@ -105,6 +109,8 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
         items: extracted.items || [],
         imageUrl: resizedDataUrl,
         createdAt: Date.now(),
+        source: 'scan',
+        status: 'processed',
       };
 
       // Generate Hash
@@ -181,23 +187,53 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
           </div>
 
           {queue.length > 0 && (
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="px-6 py-3 bg-blue-50 text-blue-600 rounded-2xl text-sm font-black hover:bg-blue-100 transition-all flex items-center space-x-2 shadow-sm"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M12 4v16m8-8H4" />
-              </svg>
-              <span>Add More Scripts</span>
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-6 py-3 bg-blue-50 text-blue-600 rounded-2xl text-sm font-black hover:bg-blue-100 transition-all flex items-center space-x-2 shadow-sm"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M12 4v16m8-8H4" />
+                </svg>
+                <span>Add More Scripts</span>
+              </button>
+              <button
+                onClick={() => setIsManualModalOpen(true)}
+                className="px-6 py-3 bg-gray-900 text-white rounded-2xl text-sm font-black hover:bg-gray-800 transition-all flex items-center space-x-2 shadow-lg"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 12h14M12 5v14" />
+                </svg>
+                <span>Enter Manually</span>
+              </button>
+            </div>
           )}
         </div>
 
         {queue.length === 0 ? (
           <div
-            onClick={() => fileInputRef.current?.click()}
             className="border-4 border-dashed border-gray-100 rounded-[3.5rem] p-32 flex flex-col items-center justify-center cursor-pointer hover:border-blue-200 hover:bg-blue-50/20 transition-all group"
           >
+            <div className="flex flex-col sm:flex-row gap-3 mb-6">
+              <button
+                onClick={() => cameraInputRef.current?.click()}
+                className="px-6 py-3 bg-blue-600 text-white rounded-2xl text-sm font-black hover:bg-blue-700 transition-all shadow-lg"
+              >
+                Take Photo
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-6 py-3 bg-white text-blue-600 rounded-2xl text-sm font-black hover:bg-blue-50 transition-all border border-blue-100 shadow-sm"
+              >
+                Upload from Gallery
+              </button>
+              <button
+                onClick={() => setIsManualModalOpen(true)}
+                className="px-6 py-3 bg-gray-900 text-white rounded-2xl text-sm font-black hover:bg-gray-800 transition-all shadow-lg"
+              >
+                Enter Manually
+              </button>
+            </div>
             <div className="w-28 h-28 bg-blue-600 rounded-[2.5rem] flex items-center justify-center mb-8 group-hover:scale-110 transition-transform shadow-2xl shadow-blue-200">
               <svg className="w-14 h-14 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -310,6 +346,14 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
         )}
 
         <input type="file" accept="image/*" multiple className="hidden" ref={fileInputRef} onChange={handleFileChange} />
+        <input
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          ref={cameraInputRef}
+          onChange={handleFileChange}
+        />
       </div>
 
       {editingItem && editingItem.fullData && (
@@ -323,6 +367,16 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
             setEditingItem(null);
           }}
           onClose={() => setEditingItem(null)}
+        />
+      )}
+
+      {isManualModalOpen && (
+        <ManualReceiptModal
+          onClose={() => setIsManualModalOpen(false)}
+          onSave={(receipt) => {
+            onReceiptProcessed(receipt);
+            setIsManualModalOpen(false);
+          }}
         />
       )}
     </div>

@@ -13,6 +13,7 @@ import Dashboard from './components/Dashboard';
 import ReceiptScanner from './components/ReceiptScanner';
 import PurchaseHistory from './components/PurchaseHistory';
 import AllItems from './components/AllItems';
+import StoresView from './components/StoresView';
 import AIChat from './components/AIChat';
 import CsvUploader from './components/CsvUploader';
 import DuplicateReview from './components/DuplicateReview';
@@ -40,6 +41,9 @@ const ChatIcon = () => (
 );
 const PlusIcon = () => (
   <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+);
+const StoreIcon = () => (
+  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9l1-5h16l1 5M4 9h16v11H4V9zm4 11v-4a2 2 0 012-2h4a2 2 0 012 2v4" /></svg>
 );
 
 const App: React.FC = () => {
@@ -305,7 +309,9 @@ const App: React.FC = () => {
             case 'history':
                 return <PurchaseHistory receipts={processedReceipts} onUpdateReceipt={setEditingReceipt} onDeleteReceipt={handleDeleteReceipt} onScanClick={() => setView('scan')} onReviewClick={() => setView('review')} receiptsToReviewCount={receiptsToReview.length} />;
             case 'items':
-                return <AllItems receipts={receipts} onUpdateReceipt={setEditingReceipt} />;
+                return <AllItems receipts={receipts} onUpdateReceipt={handleUpdateReceipt} />;
+            case 'stores':
+                return <StoresView receipts={processedReceipts} onEditReceipt={setEditingReceipt} onDeleteReceipt={handleDeleteReceipt} />;
             case 'chat':
                 return <AIChat receipts={processedReceipts} />;
             case 'upload':
@@ -321,28 +327,31 @@ const App: React.FC = () => {
     };
 
     return (
-      <div className="flex h-screen bg-white font-sans">
-        {/* Sidebar */}
-        <aside className="w-20 flex flex-col items-center bg-white border-r border-gray-200 py-4">
-            <div className="w-12 h-12 flex items-center justify-center text-blue-600 cursor-pointer" onClick={() => setView('dashboard')}>
+      <div className="flex flex-col md:flex-row h-screen bg-white font-sans">
+        {/* Sidebar / Bottom Nav */}
+        <aside className="fixed bottom-0 left-0 right-0 md:static w-full md:w-20 flex bg-white border-t md:border-t-0 md:border-r border-gray-200 px-6 py-3 md:py-4 z-20">
+            <div className="hidden md:flex w-12 h-12 items-center justify-center text-blue-600 cursor-pointer" onClick={() => setView('dashboard')}>
                 <SpendWiseIcon />
             </div>
-            <nav className="flex flex-col items-center space-y-4 mt-10">
-                <NavIcon targetView="dashboard" currentView={view} setView={setView}><DashboardIcon /></NavIcon>
+            <div className="flex w-full items-center justify-between md:flex-col md:items-center md:space-y-6">
+                <nav className="flex flex-1 justify-between md:flex-col md:items-center md:space-y-4">
+                    <NavIcon targetView="dashboard" currentView={view} setView={setView}><DashboardIcon /></NavIcon>
                 <NavIcon targetView="history" currentView={view} setView={setView}><HistoryIcon /></NavIcon>
+                <NavIcon targetView="stores" currentView={view} setView={setView}><StoreIcon /></NavIcon>
                 <NavIcon targetView="items" currentView={view} setView={setView}><ItemsIcon /></NavIcon>
                 <NavIcon targetView="chat" currentView={view} setView={setView}><ChatIcon /></NavIcon>
             </nav>
-            <div className="mt-auto">
-                <button onClick={() => setView('scan')} className="w-14 h-14 flex items-center justify-center bg-blue-500 text-white rounded-full hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                    <PlusIcon />
-                </button>
+            <div className="md:mt-auto md:pt-2">
+                    <button onClick={() => setView('scan')} className="w-12 h-12 md:w-14 md:h-14 flex items-center justify-center bg-blue-500 text-white rounded-full hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                        <PlusIcon />
+                    </button>
+                </div>
             </div>
         </aside>
 
         {/* Main Content */}
-        <div className="flex-1 flex flex-col">
-            <header className="flex items-center justify-between px-8 py-4 border-b border-gray-200">
+        <div className="flex-1 flex flex-col pb-20 md:pb-0">
+            <header className="flex items-center justify-between px-4 md:px-8 py-3 md:py-4 border-b border-gray-200">
                 <div className="flex-1">
                     {/* This can be used for a dynamic header title based on view */}
                 </div>
@@ -358,7 +367,7 @@ const App: React.FC = () => {
                 </div>
             </header>
 
-            <main className="flex-1 overflow-y-auto bg-gray-50 p-8">
+            <main className="flex-1 overflow-y-auto bg-gray-50 p-4 md:p-8 pb-28 md:pb-8">
                 {error && (
                     <div className="p-4 mb-4 text-sm text-red-700 bg-red-100 rounded-lg" role="alert">
                         <span className="font-medium">Error:</span> {error}
