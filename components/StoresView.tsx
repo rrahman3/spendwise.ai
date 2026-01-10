@@ -1,28 +1,21 @@
 import React, { useMemo, useState } from "react";
 import { Receipt } from "../types";
+import { applyReceiptSign, getReceiptNetTotal } from "../services/totals";
 
 interface StoresViewProps {
     receipts: Receipt[];
     onEditReceipt: (receipt: Receipt) => void;
-    onDeleteReceipt?: (receiptId: string) => void;
+    onDeleteReceipt?: (receiptId: string, opts?: { skipConfirm?: boolean }) => void;
 }
 
 type StoreSummary = {
     storeName: string;
-    totalSpend: number;
+    netSpend: number;
     receiptCount: number;
-    itemCount: number;
+    refundCount: number;
 };
 
-type ItemAggregate = {
-    name: string;
-    quantity: number;
-    spend: number;
-    category?: string;
-    receipts: { id: string; date: string; total: number }[];
-};
-
-const currency = (v: number) => `$${v.toFixed(2)}`;
+const currency = (v: number) => `${v < 0 ? "-" : ""}$${Math.abs(v).toFixed(2)}`;
 
 const StoresView: React.FC<StoresViewProps> = ({ receipts, onEditReceipt, onDeleteReceipt }) => {
     const summaries = useMemo<StoreSummary[]>(() => {
@@ -30,65 +23,121 @@ const StoresView: React.FC<StoresViewProps> = ({ receipts, onEditReceipt, onDele
         receipts.forEach((r) => {
             const key = r.storeName?.trim() || "Unknown Store";
             if (!map.has(key)) {
-                map.set(key, { storeName: key, totalSpend: 0, receiptCount: 0, itemCount: 0 });
+                map.set(key, { storeName: key, netSpend: 0, receiptCount: 0, refundCount: 0 });
             }
             const entry = map.get(key)!;
-            entry.totalSpend += r.total;
+            entry.netSpend += getReceiptNetTotal(r);
             entry.receiptCount += 1;
-            entry.itemCount += r.items.reduce((sum, i) => sum + i.quantity, 0);
+            if (r.type === "refund") entry.refundCount += 1;
         });
-        return Array.from(map.values()).sort((a, b) => b.totalSpend - a.totalSpend);
+        return Array.from(map.values()).sort((a, b) => Math.abs(b.netSpend) - Math.abs(a.netSpend));
     }, [receipts]);
 
     const [selectedStore, setSelectedStore] = useState<string | null>(summaries[0]?.storeName ?? null);
     const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
+    const [receiptSort, setReceiptSort] = useState<"date_desc" | "total_desc" | "total_asc" | "name_asc">("date_desc");
+    const [itemSort, setItemSort] = useState<"spend_desc" | "name_asc" | "qty_desc">("spend_desc");
+
+    const selectedSummary = useMemo(
+        () => summaries.find((s) => s.storeName === selectedStore) ?? null,
+        [summaries, selectedStore]
+    );
 
     const selectedReceipts = useMemo(
         () =>
             selectedStore
-                ? receipts
-                      .filter((r) => (r.storeName?.trim() || "Unknown Store") === selectedStore)
-                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                ? (() => {
+                      const filtered = receipts.filter((r) => (r.storeName?.trim() || "Unknown Store") === selectedStore);
+                      const sorted = [...filtered];
+                      switch (receiptSort) {
+                          case "total_desc":
+                              sorted.sort((a, b) => getReceiptNetTotal(b) - getReceiptNetTotal(a));
+                              break;
+                          case "total_asc":
+                              sorted.sort((a, b) => getReceiptNetTotal(a) - getReceiptNetTotal(b));
+                              break;
+                          case "name_asc":
+                              sorted.sort((a, b) => (a.storeName || "").localeCompare(b.storeName || ""));
+                              break;
+                          case "date_desc":
+                          default:
+                              sorted.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                      }
+                      return sorted;
+                  })()
                 : [],
-        [receipts, selectedStore]
+        [receipts, selectedStore, receiptSort]
     );
 
-    const receiptById = useMemo(() => {
-        const map = new Map<string, Receipt>();
-        receipts.forEach((r) => map.set(r.id, r));
-        return map;
-    }, [receipts]);
-
-    const aggregatedItems = useMemo<ItemAggregate[]>(() => {
-        const map = new Map<string, ItemAggregate>();
+    const aggregatedItems = useMemo(() => {
+        const map = new Map<
+            string,
+            { name: string; quantity: number; spend: number; category?: string; receipts: number; sampleReceiptId?: string; receiptLabels: string[] }
+        >();
         selectedReceipts.forEach((r) => {
             r.items.forEach((i) => {
                 const key = i.name.toLowerCase();
-                const existing = map.get(key);
-                if (existing) {
-                    existing.quantity += i.quantity;
-                    existing.spend += i.price * i.quantity;
-                    existing.receipts.push({ id: r.id, date: r.date, total: r.total });
+                const lineValue = applyReceiptSign(i.price * (i.quantity ?? 1), r.type);
+                const label = `${new Date(r.date).toLocaleDateString()} - ${r.storeName || "Receipt"}`;
+                if (map.has(key)) {
+                    const agg = map.get(key)!;
+                    agg.quantity += i.quantity;
+                    agg.spend += lineValue;
+                    agg.receipts += 1;
+                    if (!agg.receiptLabels.includes(label)) {
+                        agg.receiptLabels.push(label);
+                    }
                 } else {
                     map.set(key, {
                         name: i.name,
                         quantity: i.quantity,
-                        spend: i.price * i.quantity,
+                        spend: lineValue,
                         category: i.category,
-                        receipts: [{ id: r.id, date: r.date, total: r.total }],
+                        receipts: 1,
+                        sampleReceiptId: r.id,
+                        receiptLabels: [label],
                     });
                 }
             });
         });
-        return Array.from(map.values()).sort((a, b) => b.quantity - a.quantity || b.spend - a.spend);
-    }, [selectedReceipts]);
+        const sorted = Array.from(map.values());
+        switch (itemSort) {
+            case "name_asc":
+                sorted.sort((a, b) => a.name.localeCompare(b.name));
+                break;
+            case "qty_desc":
+                sorted.sort((a, b) => (b.quantity ?? 0) - (a.quantity ?? 0));
+                break;
+            case "spend_desc":
+            default:
+                sorted.sort((a, b) => Math.abs(b.spend) - Math.abs(a.spend));
+        }
+        return sorted.slice(0, 20);
+    }, [selectedReceipts, itemSort]);
+
+    const storeSummary = selectedSummary;
+    const storeCount = summaries.length;
+    const totalNet = useMemo(() => {
+        return receipts.reduce((sum, r) => sum + getReceiptNetTotal(r), 0);
+    }, [receipts]);
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div className="bg-white rounded-2xl sm:rounded-[2.5rem] border border-gray-100 shadow-sm px-4 sm:px-6 py-4 flex items-center justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-gray-900">Stores</h1>
-                    <p className="text-gray-500">Browse spend by merchant and drill into receipts and items.</p>
+                    <p className="text-[11px] font-black uppercase tracking-[0.2em] text-blue-500">Stores</p>
+                    <h1 className="text-xl sm:text-2xl font-black text-gray-900">Store Overview</h1>
+                    <p className="text-xs text-gray-500 font-semibold">Browse spend by merchant.</p>
+                </div>
+                <div className="hidden sm:flex items-center gap-6 text-right">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Stores</p>
+                        <p className="text-lg font-black text-gray-900">{storeCount}</p>
+                    </div>
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Net Spend</p>
+                        <p className="text-lg font-black text-gray-900">{currency(totalNet)}</p>
+                    </div>
                 </div>
             </div>
 
@@ -109,7 +158,10 @@ const StoresView: React.FC<StoresViewProps> = ({ receipts, onEditReceipt, onDele
                             return (
                                 <button
                                     key={store.storeName}
-                                    onClick={() => setSelectedStore(store.storeName)}
+                                    onClick={() => {
+                                        setSelectedStore(store.storeName);
+                                        setSelectedReceipt(null);
+                                    }}
                                     className={`w-full text-left px-4 py-3 flex items-center justify-between hover:bg-blue-50 transition ${
                                         isActive ? "bg-blue-50 border-l-4 border-blue-500" : ""
                                     }`}
@@ -117,11 +169,13 @@ const StoresView: React.FC<StoresViewProps> = ({ receipts, onEditReceipt, onDele
                                     <div>
                                         <p className="font-semibold text-gray-900">{store.storeName}</p>
                                         <p className="text-xs text-gray-500">
-                                            {store.receiptCount} receipts · {store.itemCount} items
+                                            {store.receiptCount} receipts - {store.refundCount} refunds
                                         </p>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-sm font-bold text-gray-900">{currency(store.totalSpend)}</p>
+                                        <p className={`text-sm font-bold ${store.netSpend < 0 ? "text-red-600" : "text-gray-900"}`}>
+                                            {currency(store.netSpend)}
+                                        </p>
                                     </div>
                                 </button>
                             );
@@ -132,96 +186,118 @@ const StoresView: React.FC<StoresViewProps> = ({ receipts, onEditReceipt, onDele
                 <div className="lg:col-span-2 space-y-6">
                     {selectedStore ? (
                         <>
-                            <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-6 flex flex-wrap gap-4 justify-between">
-                                <div>
-                                    <p className="text-xs font-semibold text-gray-500">Store</p>
-                                    <h2 className="text-2xl font-bold text-gray-900">{selectedStore}</h2>
-                                </div>
-                                <div className="flex gap-3">
-                                    <div className="px-4 py-3 rounded-xl bg-blue-50 text-blue-700 font-semibold">
-                                        {selectedReceipts.length} receipts
+                            {storeSummary && (
+                                <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-6 flex flex-wrap gap-4 justify-between">
+                                    <div>
+                                        <p className="text-xs font-semibold text-gray-500">Store</p>
+                                        <h2 className="text-2xl font-bold text-gray-900">{storeSummary.storeName}</h2>
+                                        <p className="text-xs text-gray-500">{storeSummary.receiptCount} receipts - {storeSummary.refundCount} refunds</p>
                                     </div>
-                                    <div className="px-4 py-3 rounded-xl bg-green-50 text-green-700 font-semibold">
-                                        {currency(selectedReceipts.reduce((sum, r) => sum + r.total, 0))}
+                                    <div className="text-right">
+                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Net spend</p>
+                                        <p className="text-2xl font-black text-gray-900">{currency(storeSummary.netSpend)}</p>
                                     </div>
                                 </div>
-                            </div>
+                            )}
 
                             <div className="grid md:grid-cols-2 gap-6">
                                 <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="font-semibold text-gray-900">Recent receipts</h3>
-                                    </div>
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="font-semibold text-gray-900">Receipts</h3>
+                                    <select
+                                        value={receiptSort}
+                                        onChange={(e) => setReceiptSort(e.target.value as typeof receiptSort)}
+                                        className="text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1"
+                                    >
+                                        <option value="date_desc">Newest</option>
+                                        <option value="total_desc">Total (high to low)</option>
+                                        <option value="total_asc">Total (low to high)</option>
+                                        <option value="name_asc">Name (A-Z)</option>
+                                    </select>
+                                </div>
                                     <div className="divide-y divide-gray-100 max-h-[260px] overflow-y-auto">
                                         {selectedReceipts.length === 0 && (
                                             <div className="py-4 text-sm text-gray-500 text-center">No receipts yet.</div>
                                         )}
-                                        {selectedReceipts.map((r) => (
-                                            <button
-                                                key={r.id}
-                                                onClick={() => setSelectedReceipt(r)}
-                                                className="w-full text-left py-3 flex justify-between items-center hover:bg-blue-50 rounded-lg px-2 transition"
-                                            >
-                                                <div className="flex-1">
-                                                    <p className="font-semibold text-gray-800">{r.storeName}</p>
-                                                    <p className="text-xs text-gray-500">{new Date(r.date).toLocaleDateString()}</p>
-                                                </div>
-                                                <div className="text-right">
-                                                    <p className="text-sm font-bold text-gray-900">{currency(r.total)}</p>
-                                                    <span className="text-[11px] text-blue-600 font-semibold">View</span>
-                                                </div>
-                                            </button>
-                                        ))}
+                                        {selectedReceipts.map((r) => {
+                                            const net = getReceiptNetTotal(r);
+                                            return (
+                                                <button
+                                                    key={r.id}
+                                                    onClick={() => setSelectedReceipt(r)}
+                                                    className="w-full text-left py-3 flex justify-between items-center hover:bg-blue-50 rounded-lg px-2 transition"
+                                                >
+                                                    <div className="flex-1">
+                                                        <p className="font-semibold text-gray-800">{r.storeName}</p>
+                                                        <p className="text-xs text-gray-500">
+                                                            {r.storeLocation ? `${r.storeLocation} - ` : ''}
+                                                            {new Date(r.date).toLocaleDateString()}
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className={`text-sm font-bold ${net < 0 ? "text-red-600" : "text-gray-900"}`}>
+                                                            {currency(net)}
+                                                        </p>
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                 </div>
 
                                 <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-6">
                                     <div className="flex items-center justify-between mb-4">
-                                        <h3 className="font-semibold text-gray-900">Items & counts</h3>
-                                        <span className="text-xs text-gray-500">
-                                            {aggregatedItems.reduce((sum, i) => sum + i.quantity, 0)} total units
-                                        </span>
+                                        <h3 className="font-semibold text-gray-900">Top items</h3>
+                                        <select
+                                            value={itemSort}
+                                            onChange={(e) => setItemSort(e.target.value as typeof itemSort)}
+                                            className="text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1"
+                                        >
+                                            <option value="spend_desc">Top spend</option>
+                                            <option value="qty_desc">Quantity</option>
+                                            <option value="name_asc">Name (A-Z)</option>
+                                        </select>
                                     </div>
-                                    <div className="divide-y divide-gray-100 max-h-[260px] overflow-y-auto">
-                                        {aggregatedItems.length === 0 && (
-                                            <div className="py-4 text-sm text-gray-500 text-center">No items yet.</div>
-                                        )}
-                                        {aggregatedItems.map((item) => (
-                                            <div key={item.name} className="py-3">
-                                                <div className="flex justify-between items-center">
-                                                    <div>
-                                                        <p className="font-semibold text-gray-800">{item.name}</p>
-                                                        <p className="text-xs text-gray-500">
-                                                            {item.category ? `${item.category} · ` : ""}{item.quantity} units
-                                                        </p>
-                                                    </div>
-                                                    <p className="text-sm font-bold text-gray-900">{currency(item.spend)}</p>
-                                                </div>
-                                                {item.receipts.length > 0 && (
-                                                    <div className="flex flex-wrap gap-2 mt-2">
-                                                        {item.receipts.slice(0, 3).map((r) => (
-                                                            <button
-                                                                key={r.id}
-                                                                onClick={() => {
-                                                                    const full = receiptById.get(r.id);
-                                                                    if (full) setSelectedReceipt(full);
-                                                                }}
-                                                                className="px-3 py-1 text-xs bg-blue-50 text-blue-700 rounded-full border border-blue-100 hover:bg-blue-100 transition"
-                                                            >
-                                                                {new Date(r.date).toLocaleDateString()} · {currency(r.total)}
-                                                            </button>
-                                                        ))}
-                                                        {item.receipts.length > 3 && (
-                                                            <span className="text-xs text-gray-500">
-                                                                +{item.receipts.length - 3} more receipt{item.receipts.length - 3 > 1 ? "s" : ""}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))}
+                    <div className="divide-y divide-gray-100 max-h-[260px] overflow-y-auto">
+                        {aggregatedItems.length === 0 && (
+                            <div className="py-4 text-sm text-gray-500 text-center">No items yet.</div>
+                        )}
+                        {aggregatedItems.map((item) => (
+                            <div key={item.name} className="py-3">
+                                <div className="flex justify-between items-center gap-2">
+                                    <div>
+                                        <p className="font-semibold text-gray-800">{item.name}</p>
+                                        <p className="text-xs text-gray-500">
+                                            {item.category ? `${item.category} - ` : ''}{item.quantity} units - {item.receipts} receipts
+                                        </p>
+                                        <p className="text-[11px] text-gray-400">
+                                            Receipts: {item.receiptLabels.slice(0, 3).join(' | ')}{item.receiptLabels.length > 3 ? ` +${item.receiptLabels.length - 3} more` : ''}
+                                        </p>
+                                        <div className="flex flex-wrap gap-2 mt-1">
+                                            {item.receiptLabels.map((label, idx) => {
+                                                const targetReceipt = selectedReceipts.find((r) => label.includes(r.storeName || '') && label.includes(new Date(r.date).toLocaleDateString())) || selectedReceipts.find((r) => r.id === item.sampleReceiptId);
+                                                return (
+                                                    <button
+                                                        key={idx}
+                                                        onClick={() => {
+                                                            if (targetReceipt) setSelectedReceipt(targetReceipt);
+                                                        }}
+                                                        className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 underline"
+                                                    >
+                                                        {label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
                                     </div>
+                                    <p className={`text-sm font-bold ${item.spend < 0 ? "text-red-600" : "text-gray-900"}`}>
+                                        {currency(item.spend)}
+                                    </p>
                                 </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
                             </div>
                         </>
                     ) : (
@@ -232,13 +308,20 @@ const StoresView: React.FC<StoresViewProps> = ({ receipts, onEditReceipt, onDele
                 </div>
             </div>
 
-            {/* Receipt modal */}
             {selectedReceipt && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col animate-in zoom-in-95">
                         <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
                             <div className="flex items-center space-x-3">
-                                <h3 className="text-xl font-black text-gray-900 tracking-tight">{selectedReceipt.storeName}</h3>
+                                <div className="flex flex-col">
+                                    <h3 className="text-xl font-black text-gray-900 tracking-tight">{selectedReceipt.storeName}</h3>
+                                    {selectedReceipt.storeLocation && (
+                                        <p className="text-xs font-semibold text-gray-500">{selectedReceipt.storeLocation}</p>
+                                    )}
+                                </div>
+                                <span className={`text-[10px] uppercase tracking-wider font-black px-2 py-0.5 rounded-full ${selectedReceipt.type === 'refund' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+                                    {selectedReceipt.type === 'refund' ? 'refund' : 'purchase'}
+                                </span>
                                 <button
                                     onClick={() => onEditReceipt(selectedReceipt)}
                                     className="p-2 hover:bg-blue-100 text-blue-600 rounded-lg transition-colors"
@@ -252,7 +335,7 @@ const StoresView: React.FC<StoresViewProps> = ({ receipts, onEditReceipt, onDele
                                     <button
                                         onClick={() => {
                                             if (window.confirm("Delete this receipt? This cannot be undone.")) {
-                                                onDeleteReceipt(selectedReceipt.id);
+                                                onDeleteReceipt(selectedReceipt.id, { skipConfirm: true });
                                                 setSelectedReceipt(null);
                                             }
                                         }}
@@ -278,12 +361,15 @@ const StoresView: React.FC<StoresViewProps> = ({ receipts, onEditReceipt, onDele
                         <div className="flex-1 overflow-y-auto p-6 space-y-6">
                             <div className="flex justify-between items-center bg-blue-50/50 p-4 rounded-2xl">
                                 <div>
-                                    <p className="text-[10px] font-black uppercase text-blue-400">Total Charged</p>
-                                    <p className="text-2xl font-black text-blue-600">{currency(selectedReceipt.total)}</p>
+                                    <p className="text-[10px] font-black uppercase text-blue-400">Total</p>
+                                    <p className="text-2xl font-black text-blue-600">{currency(getReceiptNetTotal(selectedReceipt))}</p>
                                 </div>
                                 <div className="text-right">
                                     <p className="text-[10px] font-black uppercase text-gray-400">Date</p>
                                     <p className="text-sm font-bold text-gray-900">{selectedReceipt.date}</p>
+                                    {selectedReceipt.storeLocation && (
+                                        <p className="text-xs font-semibold text-gray-500">{selectedReceipt.storeLocation}</p>
+                                    )}
                                 </div>
                             </div>
 
@@ -294,9 +380,11 @@ const StoresView: React.FC<StoresViewProps> = ({ receipts, onEditReceipt, onDele
                                         <div key={idx} className="flex justify-between items-center p-3 border-b border-gray-100 last:border-0">
                                             <div className="flex-1">
                                                 <p className="text-sm font-black text-gray-800">{item.name}</p>
-                                                <p className="text-[10px] text-gray-500 font-bold uppercase">{item.category || "Uncategorized"} · Qty {item.quantity}</p>
+                                                <p className="text-[10px] text-gray-500 font-bold uppercase">
+                                                    {item.category || 'Uncategorized'} - Qty {item.quantity}
+                                                </p>
                                             </div>
-                                            <p className="text-sm font-black text-gray-900">{currency(item.price * item.quantity)}</p>
+                                            <p className="text-sm font-black text-gray-900">{currency(applyReceiptSign(item.price * item.quantity, selectedReceipt.type))}</p>
                                         </div>
                                     ))}
                                 </div>

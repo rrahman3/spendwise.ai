@@ -2,12 +2,16 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { extractReceiptData } from '../services/geminiService';
 import { Receipt } from '../types';
+import { normalizeTotal } from '../services/totals';
 import EditModal from './EditModal';
 import ManualReceiptModal from './ManualReceiptModal';
+import { storage } from '../services/firebaseConfig';
+import { getDownloadURL, ref, uploadString } from 'firebase/storage';
 
 interface ReceiptScannerProps {
   onReceiptProcessed: (receipt: Receipt) => void;
   onFinished: () => void;
+  userId?: string;
 }
 
 interface QueuedItem {
@@ -19,9 +23,10 @@ interface QueuedItem {
   error?: string;
 }
 
-const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onFinished }) => {
+const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onFinished, userId }) => {
   const [queue, setQueue] = useState<QueuedItem[]>([]);
   const [isAnyProcessing, setIsAnyProcessing] = useState(false);
+  const [limitError, setLimitError] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<QueuedItem | null>(null);
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -65,6 +70,11 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
     const selectedFiles = Array.from(e.target.files || []);
     if (selectedFiles.length === 0) return;
 
+    // New upload attempt clears prior limit error banner
+    if (limitError) {
+      setLimitError(null);
+    }
+
     const newItems: QueuedItem[] = selectedFiles.map(file => ({
       id: Math.random().toString(36).substr(2, 9),
       file,
@@ -78,7 +88,7 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
   };
 
   const processQueue = async () => {
-    if (isAnyProcessing) return;
+    if (isAnyProcessing || limitError) return;
 
     const nextItem = queue.find(item => item.status === 'pending');
     if (!nextItem) return;
@@ -95,6 +105,26 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
 
       const originalBase64 = await base64Promise;
       const resizedDataUrl = await resizeImage(originalBase64);
+
+      if (!userId) {
+        updateItemStatus(nextItem.id, 'error', 'Sign in required before uploading receipts.');
+        setLimitError('Sign in required before uploading receipts.');
+        setIsAnyProcessing(false);
+        return;
+      }
+
+      let finalImageUrl = resizedDataUrl;
+      try {
+        const imageRef = ref(storage, `receipts/${userId}/${Date.now()}-${nextItem.file.name}`);
+        await uploadString(imageRef, resizedDataUrl, 'data_url');
+        finalImageUrl = await getDownloadURL(imageRef);
+      } catch (uploadErr) {
+        console.warn("Image upload failed", uploadErr);
+        updateItemStatus(nextItem.id, 'error', 'Upload failed. Please retry.');
+        setIsAnyProcessing(false);
+        return;
+      }
+
       const base64ForAi = resizedDataUrl.split(',')[1];
 
       const extracted = await extractReceiptData(base64ForAi);
@@ -104,22 +134,16 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
         storeName: extracted.storeName || 'Unknown Store',
         date: extracted.date || new Date().toISOString().split('T')[0],
         time: extracted.time || '00:00:00',
-        total: extracted.total || 0,
+        type: extracted.type === 'refund' ? 'refund' : 'purchase',
+        total: normalizeTotal(extracted.total || 0),
         currency: extracted.currency || 'USD',
+        storeLocation: extracted.storeLocation || '',
         items: extracted.items || [],
-        imageUrl: resizedDataUrl,
+        imageUrl: finalImageUrl,
         createdAt: Date.now(),
         source: 'scan',
         status: 'processed',
       };
-
-      // Generate Hash
-      const dataString = `${newReceipt.storeName}|${newReceipt.date}|${newReceipt.time}|${newReceipt.total}`;
-      const encoder = new TextEncoder();
-      const data = encoder.encode(dataString);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      newReceipt.hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
       onReceiptProcessed(newReceipt);
 
@@ -131,9 +155,23 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
         } : item
       ));
 
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      updateItemStatus(nextItem.id, 'error', 'AI Extraction failed');
+      const code = err?.code || err?.message || "";
+      const isLimit = typeof code === 'string' && code.toLowerCase().includes('resource-exhausted');
+      if (isLimit) {
+        const message = 'Scan limit reached for your plan. Please upgrade to continue.';
+        setLimitError(message);
+        setQueue(prev => prev.map(item => {
+          if (item.id === nextItem.id || item.status === 'pending' || item.status === 'processing') {
+            return { ...item, status: 'error', error: message };
+          }
+          return item;
+        }));
+        return;
+      } else {
+        updateItemStatus(nextItem.id, 'error', 'AI Extraction failed');
+      }
     } finally {
       setIsAnyProcessing(false);
     }
@@ -149,7 +187,21 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
     ));
   };
 
+  const retryItem = (id: string) => {
+    if (limitError) {
+      setLimitError(null);
+    }
+    setQueue(prev =>
+      prev.map(item =>
+        item.id === id ? { ...item, status: 'pending', error: undefined } : item
+      )
+    );
+  };
+
   const removeItem = (id: string) => {
+    if (limitError) {
+      setLimitError(null);
+    }
     setQueue(prev => prev.filter(item => item.id !== id));
   };
 
@@ -158,8 +210,13 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
   const allDone = queue.length > 0 && completedCount === queue.length;
 
   return (
-    <div className="flex flex-col items-center min-h-[600px] space-y-8 max-w-6xl mx-auto w-full pb-32">
-      <div className="w-full bg-white p-8 rounded-[3rem] shadow-2xl border border-gray-100 overflow-hidden relative">
+    <div className="flex flex-col items-center min-h-[400px] sm:min-h-[600px] space-y-6 sm:space-y-8 max-w-5xl mx-auto w-full pb-24 sm:pb-32 px-3 sm:px-0">
+      {limitError && (
+        <div className="w-full rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800 font-semibold">
+          {limitError}
+        </div>
+      )}
+      <div className="w-full bg-white p-4 sm:p-8 rounded-3xl sm:rounded-[3rem] shadow-xl sm:shadow-2xl border border-gray-100 overflow-hidden relative">
 
         {queue.length > 0 && (
           <div className="absolute top-0 left-0 right-0 h-2 bg-gray-50 z-10">
@@ -170,12 +227,13 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
           </div>
         )}
 
-        <div className="flex justify-between items-end mb-10 pt-4">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-4 mb-8 sm:mb-10 pt-2 sm:pt-4">
           <div className="space-y-1">
-            <h2 className="text-4xl font-black text-gray-900 tracking-tight">Batch Analyzer</h2>
-            <div className="flex items-center space-x-3">
-              <p className="text-gray-500 font-bold">
-                {queue.length === 0 ? "Select multiple scripts/receipts" : `${completedCount} of ${queue.length} Analyzed`}
+            <p className="text-[11px] font-black uppercase tracking-[0.2em] text-blue-500">Scan Queue</p>
+            <h2 className="text-2xl sm:text-4xl font-black text-gray-900 tracking-tight">Batch Analyzer</h2>
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-gray-500 font-bold text-sm sm:text-base">
+                {queue.length === 0 ? "Select multiple receipts" : `${completedCount} of ${queue.length} analyzed`}
               </p>
               {isAnyProcessing && (
                 <div className="flex items-center space-x-2 bg-blue-50 px-3 py-1 rounded-full animate-pulse">
@@ -187,24 +245,30 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
           </div>
 
           {queue.length > 0 && (
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap gap-2 justify-start sm:justify-end">
+              <button
+                onClick={() => cameraInputRef.current?.click()}
+                className="px-4 py-2 bg-blue-600 text-white text-xs sm:text-sm font-black rounded-2xl hover:bg-blue-700 transition-all shadow-sm"
+              >
+                Take another photo
+              </button>
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="px-6 py-3 bg-blue-50 text-blue-600 rounded-2xl text-sm font-black hover:bg-blue-100 transition-all flex items-center space-x-2 shadow-sm"
+                className="px-4 py-2 bg-white text-blue-600 text-xs sm:text-sm font-black rounded-2xl border border-blue-100 hover:bg-blue-50 transition-all"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M12 4v16m8-8H4" />
-                </svg>
-                <span>Add More Scripts</span>
+                Upload from gallery
               </button>
               <button
                 onClick={() => setIsManualModalOpen(true)}
-                className="px-6 py-3 bg-gray-900 text-white rounded-2xl text-sm font-black hover:bg-gray-800 transition-all flex items-center space-x-2 shadow-lg"
+                className="px-4 py-2 bg-gray-900 text-white text-xs sm:text-sm font-black rounded-2xl hover:bg-gray-800 transition-all"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 12h14M12 5v14" />
-                </svg>
-                <span>Enter Manually</span>
+                Enter manually
+              </button>
+              <button
+                onClick={() => setQueue([])}
+                className="px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-400 text-xs sm:text-sm font-black rounded-2xl transition-all uppercase tracking-widest"
+              >
+                Start over
               </button>
             </div>
           )}
@@ -212,40 +276,33 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
 
         {queue.length === 0 ? (
           <div
-            className="border-4 border-dashed border-gray-100 rounded-[3.5rem] p-32 flex flex-col items-center justify-center cursor-pointer hover:border-blue-200 hover:bg-blue-50/20 transition-all group"
+            className="rounded-3xl sm:rounded-[3rem] p-8 sm:p-12 flex flex-col items-center justify-center cursor-pointer bg-gradient-to-br from-blue-50 via-white to-blue-100 border-2 border-dashed border-blue-200 hover:border-blue-300 transition-all group shadow-sm"
           >
-            <div className="flex flex-col sm:flex-row gap-3 mb-6">
+            <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto mb-6 sm:mb-8">
               <button
                 onClick={() => cameraInputRef.current?.click()}
-                className="px-6 py-3 bg-blue-600 text-white rounded-2xl text-sm font-black hover:bg-blue-700 transition-all shadow-lg"
+                className="w-full sm:w-auto px-5 py-3 bg-blue-600 text-white rounded-2xl text-sm font-black hover:bg-blue-700 transition-all shadow-lg"
               >
                 Take Photo
               </button>
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="px-6 py-3 bg-white text-blue-600 rounded-2xl text-sm font-black hover:bg-blue-50 transition-all border border-blue-100 shadow-sm"
+                className="w-full sm:w-auto px-5 py-3 bg-white text-blue-600 rounded-2xl text-sm font-black hover:bg-blue-50 transition-all border border-blue-100 shadow-sm"
               >
                 Upload from Gallery
               </button>
               <button
                 onClick={() => setIsManualModalOpen(true)}
-                className="px-6 py-3 bg-gray-900 text-white rounded-2xl text-sm font-black hover:bg-gray-800 transition-all shadow-lg"
+                className="w-full sm:w-auto px-5 py-3 bg-gray-900 text-white rounded-2xl text-sm font-black hover:bg-gray-800 transition-all shadow-lg"
               >
                 Enter Manually
               </button>
             </div>
-            <div className="w-28 h-28 bg-blue-600 rounded-[2.5rem] flex items-center justify-center mb-8 group-hover:scale-110 transition-transform shadow-2xl shadow-blue-200">
-              <svg className="w-14 h-14 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            <p className="text-3xl font-black text-gray-800 tracking-tight">Upload Batch</p>
-            <p className="text-gray-400 font-bold mt-2 text-center max-w-sm">Process 20+ images simultaneously. We'll extract and save every detail automatically.</p>
           </div>
         ) : (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-700">
-            <div className="max-h-[600px] overflow-y-auto pr-4 scrollbar-hide">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+            <div className="max-h-[600px] overflow-y-auto pr-2 sm:pr-4 scrollbar-hide">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6">
                 {queue.map((item) => (
                   <div
                     key={item.id}
@@ -278,20 +335,37 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
                       )}
 
                       {item.status === 'error' && (
-                        <div className="text-white space-y-1">
+                        <div className="text-white space-y-2 flex flex-col items-center">
                           <svg className="w-10 h-10 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                           </svg>
                           <p className="text-[10px] font-black uppercase">Retry Required</p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); retryItem(item.id); }}
+                              className="px-3 py-1.5 text-xs font-bold rounded-full bg-white text-red-600 hover:bg-red-50"
+                            >
+                              Retry
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); removeItem(item.id); }}
+                              className="px-3 py-1.5 text-xs font-bold rounded-full bg-red-50 text-red-700 hover:bg-red-100"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
 
                     {item.status === 'verified' && item.fullData && (
                       <div className="absolute bottom-4 left-4 right-4 bg-white/95 backdrop-blur-md rounded-2xl p-3 shadow-xl pointer-events-none group-hover:opacity-0 transition-opacity">
-                        <p className="text-[10px] font-black truncate text-gray-900 leading-none mb-1.5">{item.fullData.storeName}</p>
+                        <p className="text-[10px] font-black truncate text-gray-900 leading-none mb-0.5">{item.fullData.storeName}</p>
+                        {item.fullData.storeLocation && (
+                          <p className="text-[9px] text-gray-500 font-semibold truncate leading-none mb-1">{item.fullData.storeLocation}</p>
+                        )}
                         <div className="flex justify-between items-center">
-                          <p className="text-[10px] font-black text-blue-600">${item.fullData.total.toFixed(2)}</p>
+                        <p className="text-[10px] font-black text-blue-600">{`${item.fullData.type === 'refund' ? '-' : ''}$${item.fullData.total.toFixed(2)}`}</p>
                           <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
                             <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
@@ -325,16 +399,16 @@ const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onReceiptProcessed, onF
                 </div>
               </div>
 
-              <div className="flex space-x-4 w-full md:w-auto">
+              <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
                 <button
                   onClick={() => setQueue([])}
-                  className="flex-1 md:flex-none px-10 py-5 bg-gray-50 hover:bg-gray-100 text-gray-400 font-black rounded-2xl transition-all uppercase text-xs tracking-widest"
+                  className="w-full sm:w-auto px-6 sm:px-10 py-4 sm:py-5 bg-gray-50 hover:bg-gray-100 text-gray-400 font-black rounded-2xl transition-all uppercase text-xs tracking-widest"
                 >
                   Clear Queue
                 </button>
                 <button
                   onClick={onFinished}
-                  className={`flex-1 md:flex-none px-14 py-5 font-black rounded-[1.5rem] transition-all shadow-2xl ${allDone ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200' : 'bg-gray-100 text-gray-300 cursor-not-allowed shadow-none'
+                  className={`w-full sm:w-auto px-8 sm:px-14 py-4 sm:py-5 font-black rounded-[1.5rem] transition-all shadow-2xl ${allDone ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-200' : 'bg-gray-100 text-gray-300 cursor-not-allowed shadow-none'
                     }`}
                   disabled={!allDone}
                 >

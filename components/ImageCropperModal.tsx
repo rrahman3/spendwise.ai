@@ -63,11 +63,12 @@ const makeCenteredCrop = (mediaWidth: number, mediaHeight: number, aspect?: numb
 const ImageCropperModal: React.FC<ImageCropperModalProps> = ({ imageUrl, onCancel, onSave }) => {
     const [image, setImage] = useState<HTMLImageElement | null>(null);
     const [safeUrl, setSafeUrl] = useState<string>(imageUrl);
-    const [crop, setCrop] = useState<Crop>({ unit: "%", x: 5, y: 5, width: 90, height: 90, aspect: 3 / 4 });
+    const [crop, setCrop] = useState<Crop>({ unit: "%", x: 5, y: 5, width: 90, height: 90, aspect: undefined });
     const [pixelCrop, setPixelCrop] = useState<PixelCrop | null>(null);
-    const [aspect, setAspect] = useState<number | undefined>(3 / 4);
+    const [aspect, setAspect] = useState<number | undefined>(undefined);
     const [error, setError] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const [isRotating, setIsRotating] = useState(false);
 
     useEffect(() => {
         let revokedUrl: string | null = null;
@@ -118,7 +119,7 @@ const ImageCropperModal: React.FC<ImageCropperModalProps> = ({ imageUrl, onCance
         }
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         if (!image) {
             setError("Image not loaded yet. Please wait a moment and try again.");
             return;
@@ -129,7 +130,7 @@ const ImageCropperModal: React.FC<ImageCropperModalProps> = ({ imageUrl, onCance
         setError(null);
         try {
             const dataUrl = canvasFromCrop(image, effectivePixelCrop);
-            onSave(dataUrl);
+            await onSave(dataUrl);
         } catch (err) {
             console.error(err);
             setError("Could not crop image. Please try again.");
@@ -138,12 +139,45 @@ const ImageCropperModal: React.FC<ImageCropperModalProps> = ({ imageUrl, onCance
         }
     };
 
+    const rotateImage = async (sourceUrl: string, direction: "left" | "right") => {
+        setIsRotating(true);
+        setError(null);
+        try {
+            const img = new Image();
+            img.src = sourceUrl;
+            await new Promise<void>((resolve, reject) => {
+                img.onload = () => resolve();
+                img.onerror = reject;
+            });
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            if (!ctx) throw new Error("Failed to get canvas context");
+            const clockwise = direction === "right";
+            const angle = clockwise ? Math.PI / 2 : -Math.PI / 2;
+            canvas.width = img.height;
+            canvas.height = img.width;
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.rotate(angle);
+            ctx.drawImage(img, -img.width / 2, -img.height / 2);
+            const rotatedDataUrl = canvas.toDataURL("image/jpeg", 0.9);
+            setSafeUrl(rotatedDataUrl);
+            setImage(null);
+            setCrop({ unit: "%", x: 5, y: 5, width: 90, height: 90, aspect });
+            setPixelCrop(null);
+        } catch (err) {
+            console.error("Failed to rotate image", err);
+            setError("Could not rotate image. Try again.");
+        } finally {
+            setIsRotating(false);
+        }
+    };
+
     const aspectValue = aspect ?? "free";
 
     return (
-        <div className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white w-full max-w-4xl rounded-3xl overflow-hidden shadow-2xl border border-gray-200 flex flex-col">
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+        <div className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
+            <div className="bg-white w-full max-w-4xl rounded-3xl overflow-hidden shadow-2xl border border-gray-200 flex flex-col max-h-[95vh]">
+                <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-100">
                     <div>
                         <p className="text-[11px] font-black uppercase tracking-[0.2em] text-blue-500">Crop receipt</p>
                         <p className="text-sm text-gray-500 font-semibold">Drag edges or corners. Choose any aspect or freeform.</p>
@@ -155,7 +189,7 @@ const ImageCropperModal: React.FC<ImageCropperModalProps> = ({ imageUrl, onCance
                     </button>
                 </div>
 
-                <div className="relative flex-1 min-h-[320px] bg-gray-900 flex items-center justify-center">
+                <div className="relative flex-1 min-h-[320px] bg-gray-900 flex items-center justify-center overflow-hidden">
                     {safeUrl ? (
                         <ReactCrop
                             crop={crop}
@@ -189,8 +223,8 @@ const ImageCropperModal: React.FC<ImageCropperModalProps> = ({ imageUrl, onCance
                     )}
                 </div>
 
-                <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 bg-white flex-wrap gap-4">
-                    <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-t border-gray-100 bg-white flex-wrap gap-3 sticky bottom-0">
+                    <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
                         <label className="text-xs font-semibold text-gray-500">Aspect</label>
                         <select
                             value={aspectValue}
@@ -203,6 +237,22 @@ const ImageCropperModal: React.FC<ImageCropperModalProps> = ({ imageUrl, onCance
                                 </option>
                             ))}
                         </select>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => safeUrl && !isRotating && rotateImage(safeUrl, "left")}
+                                disabled={isRotating}
+                                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                            >
+                                Rotate -90°
+                            </button>
+                            <button
+                                onClick={() => safeUrl && !isRotating && rotateImage(safeUrl, "right")}
+                                disabled={isRotating}
+                                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                            >
+                                Rotate +90°
+                            </button>
+                        </div>
                         {error && <span className="text-xs text-red-500 font-semibold">{error}</span>}
                     </div>
                     <div className="flex gap-2">

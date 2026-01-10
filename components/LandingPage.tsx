@@ -31,8 +31,8 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
       </header>
 
       {/* Hero Section */}
-      <main className="pt-32 pb-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+      <main className="pt-28 sm:pt-32 pb-16 px-3">
+        <div className="w-full max-w-4xl sm:max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center bg-white/80 rounded-3xl shadow-lg border border-gray-100">
           <div className="inline-flex items-center px-4 py-2 rounded-full bg-blue-50 text-blue-700 font-semibold text-sm">
             Financial clarity powered by AI
           </div>
@@ -50,20 +50,20 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
             >
               Get Started for Free
             </button>
-            <div className="text-sm text-gray-500">No credit card required · Secure by Firebase</div>
+            <div className="text-sm text-gray-500">No credit card required • Secured by Firebase</div>
           </div>
         </div>
       </main>
 
       {/* About Section */}
-      <section className="py-16 bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid md:grid-cols-2 gap-10 items-center">
+      <section className="py-10 sm:py-16 bg-gray-50 px-3">
+        <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 grid md:grid-cols-2 gap-10 items-center">
           <div>
             <p className="text-blue-600 font-semibold">Why SpendWiseAI</p>
             <h2 className="mt-3 text-3xl font-black text-gray-900 leading-tight">Built for busy teams and solo founders</h2>
             <p className="mt-4 text-gray-600 leading-relaxed">
               Snap a picture or upload a CSV—our AI extracts every line item, detects duplicates, and keeps your ledger clean.
-              Spend less time wrangling receipts and more time shipping product, advising clients, or growing your business.
+              Built-in controls, audit-ready exports, and plain-language summaries so you can trust every number.
             </p>
             <div className="mt-6 grid grid-cols-2 gap-4">
               <div className="p-4 bg-white rounded-2xl border border-gray-100 shadow-sm">
@@ -103,8 +103,8 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
       </section>
 
       {/* Features Section */}
-      <section className="py-16 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <section className="py-12 sm:py-16 bg-white px-3">
+        <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-black text-gray-900">Features</h2>
             <p className="mt-4 text-lg text-gray-500">Everything you need to manage your expenses.</p>
@@ -127,33 +127,27 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
       </section>
 
       {/* Pricing Section */}
-      <section className="py-16 bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <section className="py-12 sm:py-16 bg-gray-50 px-3">
+        <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <p className="text-blue-600 font-semibold">Pricing</p>
-            <h2 className="text-3xl md:text-4xl font-black text-gray-900">Start free, scale as you grow</h2>
-            <p className="mt-4 text-lg text-gray-500">Simple plans with unlimited scans on paid tiers.</p>
+            <h2 className="text-3xl md:text-4xl font-black text-gray-900">Trustworthy plans, zero surprises</h2>
+            <p className="mt-4 text-lg text-gray-500">Two simple tiers. Keep your data secure and your books clear.</p>
           </div>
-          <div className="grid md:grid-cols-3 gap-6">
+          <div className="grid md:grid-cols-2 gap-6">
             {[
               {
-                name: "Starter",
+                name: "Free",
                 price: "$0",
-                note: "per month",
-                features: ["50 scans/month", "Basic categorization", "Email support"]
+                note: "forever",
+                features: ["50 scans/month", "Smart categorization", "Duplicate alerts", "Email support"]
               },
               {
                 name: "Pro",
                 price: "$19",
                 note: "per month",
-                features: ["Unlimited scans", "Duplicate detection", "AI chat & exports", "Priority support"],
+                features: ["Unlimited scans", "Audit-ready exports", "AI chat & anomaly checks", "Priority support & SLA"],
                 highlighted: true
-              },
-              {
-                name: "Team",
-                price: "$49",
-                note: "per month",
-                features: ["Unlimited scans", "Team workspaces", "Role-based access", "Slack alerts"]
               }
             ].map((tier) => (
               <div
@@ -177,8 +171,9 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                   onClick={onLogin}
                   className={`mt-8 w-full py-3 rounded-xl font-semibold transition-colors ${tier.highlighted ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-gray-100 text-gray-900 hover:bg-gray-200"}`}
                 >
-                  {tier.highlighted ? "Start Pro Trial" : "Choose Plan"}
+                  {tier.highlighted ? "Start Pro Trial" : "Choose Free"}
                 </button>
+                <p className="mt-4 text-xs text-gray-500">Bank-grade encryption • Secured by Firebase • Cancel anytime</p>
               </div>
             ))}
           </div>
@@ -186,8 +181,8 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
       </section>
 
       {/* Blog Section */}
-      <section className="py-16 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <section className="py-12 sm:py-16 bg-white px-3">
+        <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <p className="text-blue-600 font-semibold">Insights</p>
             <h2 className="text-3xl md:text-4xl font-black text-gray-900">Fresh finance reads</h2>
@@ -239,7 +234,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
             >
               Start for Free
             </button>
-            <div className="text-sm text-blue-100">Works on web and mobile · Secure by design</div>
+            <div className="text-sm text-blue-100">Works on web and mobile • Secure by design</div>
           </div>
         </div>
       </section>
@@ -247,7 +242,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
       {/* Footer */}
       <footer className="py-12 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-gray-500">
-            <p>&copy; 2024 SpendWiseAI. All rights reserved.</p>
+            <p>&copy; 2026 SpendWiseAI. All rights reserved.</p>
         </div>
       </footer>
     </div>

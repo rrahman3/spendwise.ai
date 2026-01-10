@@ -32,3 +32,6 @@ firebase-debug.log
 *.njsproj
 *.sln
 *.sw?
+functions/downloads/*
+functions/spendwise-ai-b7b1f-firebase-adminsdk-fbsvc-2be2950828.json
+

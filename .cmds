@@ -1,0 +1,47 @@
+gcloud functions add-iam-policy-binding getReceipts --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+gcloud functions add-iam-policy-binding saveReceipt --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+gcloud functions add-iam-policy-binding updateReceipt --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+gcloud functions add-iam-policy-binding deleteReceipt --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+gcloud functions add-iam-policy-binding checkDuplicate --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+gcloud functions add-iam-policy-binding findAndFlagDuplicates --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+gcloud functions add-iam-policy-binding backfillHashes --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+gcloud functions add-iam-policy-binding processReceiptImage --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+gcloud functions add-iam-policy-binding processCsv --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+gcloud functions add-iam-policy-binding chatWithReceipts --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+
+
+gcloud functions add-iam-policy-binding migrateImagesToStorage --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+
+for fn in getReceipts saveReceipt updateReceipt deleteReceipt checkDuplicate findAndFlagDuplicates backfillHashes migrateImagesToStorage processReceiptImage processCsv chatWithReceipts; do gcloud functions add-iam-policy-binding "$fn" --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2; done
+
+gcloud functions add-iam-policy-binding migrateAllImagesToStorage --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+firebase functions:call migrateAllImagesToStorage --data '{"token":"spendwise-migration-secret-2026"}'
+
+npx -p node@22 -p firebase-tools@latest functions:call migrateAllImagesToStorage  --project spendwise-ai-b7b1f  --params '{"token":"spendwise-migration-secret-2026"}'
+curl -X POST http://localhost:5001/spendwise-ai-b7b1f/us-central1/migrateAllImagesToStorage   -H "Content-Type: application/json"  -d '{"data":{"token":"spendwise-migration-secret-2026"}}'
+
+curl -X POST "http://localhost:5001/spendwise-ai-b7b1f/us-central1/migrateAllImagesToStorage"   -H "Content-Type: application/json"  -d "{\"data\":{\"token\":\"spendwise-migration-secret-2026\"}}" $token = curl -s -X POST "http://localhost:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=any"  -H "Content-Type: application/json"   -d "{}" | ConvertFrom-Json | Select-Object -ExpandProperty idToken
+
+$token = curl -s -X POST "http://localhost:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=any"  -H "Content-Type: application/json"  -d "{}" | ConvertFrom-Json | Select-Object -ExpandProperty idToken
+
+curl -X POST "http://localhost:5001/spendwise-ai-b7b1f/us-central1/migrateAllImagesToStorageHttp" -H "Content-Type: application/json" -d "{\"token\":\"spendwise-migration-secret-2026\"}"
+
+
+gcloud functions add-iam-policy-binding chatWithReceipts --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+
+gcloud functions add-iam-policy-binding chatWithReceipts --region us-central1 --project spendwise-ai-b7b1f --member=allUsers --role=roles/run.invoker --gen2
+
+gsutil cors set storage.cors.json gs://spendwise-ai-b7b1f.appspot.com
+
+gcloud auth application-default login
+
+npm run migrate:images
+
+gsutil cors set storage.cors.json gs://spendwise-ai-b7b1f.firebasestorage.app
+
+npm run build
+firebase deploy --only storage
+firebase deploy --only hosting
+firebase deploy --only functions
+
+node .\downloadReceipts.js .\path\to\serviceAccount.json your-bucket.appspot.com userId1,userId2

@@ -3,7 +3,7 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from "./firebaseConfig";
 import { Receipt } from "../types";
 
-type ReceiptListResult = { receipts: Receipt[] };
+type ReceiptListResult = { receipts: Receipt[]; nextPageToken: string | null };
 type SaveReceiptResult = { id: string };
 type DuplicateResult = { receipt: Receipt | null };
 type ScanResult = { found: number };
@@ -16,9 +16,16 @@ const callFunction = async <T>(name: string, data: Record<string, unknown>): Pro
 };
 
 export const dbService = {
-    getReceipts: async (userId: string): Promise<Receipt[]> => {
-        const data = await callFunction<ReceiptListResult>("getReceipts", { userId });
-        return data.receipts;
+    getReceipts: async (
+        userId: string,
+        opts?: { pageSize?: number; pageToken?: string }
+    ): Promise<ReceiptListResult> => {
+        const data = await callFunction<ReceiptListResult>("getReceipts", {
+            userId,
+            pageSize: opts?.pageSize,
+            pageToken: opts?.pageToken,
+        });
+        return data;
     },
 
     saveReceipt: async (userId: string, receipt: Omit<Receipt, "id">): Promise<string> => {

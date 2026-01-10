@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Receipt } from '../types';
+import { applyReceiptSign, getReceiptNetTotal } from '../services/totals';
 
 // --- SVG Arrow Icons ---
 const ArrowLeftIcon = () => (
@@ -34,16 +35,25 @@ const ReceiptDetails: React.FC<{
         );
     }
 
-    const totalItems = receipt.items?.reduce((sum, item) => sum + item.price, 0) || 0;
-    const totalTaxes = receipt.total - totalItems;
+    const netTotal = getReceiptNetTotal(receipt);
+    const totalItems = receipt.items?.reduce((sum, item) => sum + applyReceiptSign(item.price * (item.quantity ?? 1), receipt.type), 0) || 0;
+    const totalTaxes = netTotal - totalItems;
+
+    const totalLabel = `${netTotal < 0 ? '-' : ''}$${Math.abs(netTotal).toFixed(2)}`;
 
     return (
         <div className={cardClasses} onClick={onClick}>
             <h3 className={`text-lg font-bold mb-4 text-${color}-700`}>{title}</h3>
             <div>
                 <p><strong>Store:</strong> {receipt.storeName}</p>
+                {receipt.storeLocation && <p><strong>Location:</strong> {receipt.storeLocation}</p>}
                 <p><strong>Date:</strong> {receipt.date}</p>
-                <p><strong>Total:</strong> ${receipt.total.toFixed(2)}</p>
+                <p className="flex items-center gap-2">
+                    <strong>Total:</strong> {totalLabel}
+                    <span className={`text-[10px] uppercase tracking-wider font-black px-2 py-0.5 rounded-full ${receipt.type === 'refund' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+                        {receipt.type === 'refund' ? 'refund' : 'purchase'}
+                    </span>
+                </p>
                 <hr className="my-3" />
                 <p className="text-sm text-gray-600">Grocery Items - ${totalItems.toFixed(2)}</p>
                 <p className="text-sm text-gray-600">Total Taxes - ${totalTaxes.toFixed(2)}</p>
@@ -58,18 +68,24 @@ const ReceiptDetails: React.FC<{
 interface DuplicateReviewProps {
   receiptsToReview: Receipt[];
   allReceipts: Receipt[];
-  onResolve: (action: 'merge' | 'keep' | 'delete', originalReceipt: Receipt, duplicateReceipt: Receipt) => void;
+  onResolve: (action: 'merge' | 'keep' | 'delete' | 'keep_new', originalReceipt: Receipt, duplicateReceipt: Receipt) => void;
   onFinished: () => void;
   onEdit: (receipt: Receipt) => void;
+  onResolveAll: (action: 'delete' | 'keep') => void;
 }
 
-const DuplicateReview: React.FC<DuplicateReviewProps> = ({ receiptsToReview, allReceipts, onResolve, onFinished, onEdit }) => {
+const DuplicateReview: React.FC<DuplicateReviewProps> = ({ receiptsToReview, allReceipts, onResolve, onFinished, onEdit, onResolveAll }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [isResolving, setIsResolving] = useState(false);
+  const [isBulkResolving, setIsBulkResolving] = useState(false);
 
-  // Reset to first item when the review list changes
+  // Keep the index in range when the list shrinks after resolving
   React.useEffect(() => {
-    setCurrentIndex(0);
-  }, [receiptsToReview.length]);
+    if (receiptsToReview.length === 0) return;
+    if (currentIndex >= receiptsToReview.length) {
+      setCurrentIndex(Math.max(0, receiptsToReview.length - 1));
+    }
+  }, [receiptsToReview.length, currentIndex]);
 
   const receiptMap = useMemo(() => {
     const map = new Map<string, Receipt>();
@@ -89,7 +105,7 @@ const DuplicateReview: React.FC<DuplicateReviewProps> = ({ receiptsToReview, all
   }
 
   const duplicate = receiptsToReview[currentIndex];
-  const original = receiptMap.get(duplicate.originalReceiptId || '');
+  const original = duplicate ? receiptMap.get(duplicate.originalReceiptId || '') : undefined;
 
   const goToNext = () => {
     if (currentIndex < receiptsToReview.length - 1) {
@@ -103,20 +119,30 @@ const DuplicateReview: React.FC<DuplicateReviewProps> = ({ receiptsToReview, all
     }
   };
 
-  const handleResolve = async (action: 'merge' | 'keep' | 'delete') => {
-    if (!original) {
-        alert("Error: The original receipt could not be found. Cannot resolve this duplicate.");
+  const handleResolve = async (action: 'merge' | 'keep' | 'delete' | 'keep_new') => {
+    if (isResolving) return;
+    setIsResolving(true);
+    if (!duplicate || !original) {
+        const nextIndex = currentIndex + 1;
+        if (nextIndex < receiptsToReview.length) {
+            setCurrentIndex(nextIndex);
+        } else {
+            onFinished();
+        }
+        setIsResolving(false);
         return;
     }
 
-    await onResolve(action, original, duplicate);
-
-    // Advance to next review item if available, otherwise finish
-    const nextIndex = currentIndex + 1;
-    if (nextIndex < receiptsToReview.length) {
-        setCurrentIndex(nextIndex);
-    } else {
-        onFinished();
+    try {
+        await onResolve(action, original, duplicate);
+        const nextIndex = currentIndex + 1;
+        if (nextIndex < receiptsToReview.length) {
+            setCurrentIndex(nextIndex);
+        } else {
+            onFinished();
+        }
+    } finally {
+        setIsResolving(false);
     }
   };
 
@@ -158,15 +184,58 @@ const DuplicateReview: React.FC<DuplicateReviewProps> = ({ receiptsToReview, all
         </div>
 
         <div className="mt-8 p-6 bg-gray-50 rounded-2xl flex flex-col md:flex-row items-center justify-center gap-4">
-            <button onClick={() => handleResolve('merge')} className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-lg w-full md:w-auto">
-              Merge & Keep Original
+            <button
+              disabled={isResolving}
+              onClick={() => handleResolve('delete')}
+              className="px-6 py-3 bg-green-600 text-white font-bold rounded-lg w-full md:w-auto disabled:opacity-60 disabled:cursor-wait"
+            >
+              Keep Original, Delete New
             </button>
-            <button onClick={() => handleResolve('keep')} className="px-6 py-3 bg-green-600 text-white font-bold rounded-lg w-full md:w-auto">
-              Keep Both (Not a Duplicate)
+            <button
+              disabled={isResolving}
+              onClick={() => handleResolve('keep_new')}
+              className="px-6 py-3 bg-amber-500 text-white font-bold rounded-lg w-full md:w-auto disabled:opacity-60 disabled:cursor-wait"
+            >
+              Keep New, Delete Original
             </button>
-            <button onClick={() => handleResolve('delete')} className="px-6 py-3 bg-red-600 text-white font-bold rounded-lg w-full md:w-auto">
-              Delete New Receipt
+            <button
+              disabled={isResolving}
+              onClick={() => handleResolve('keep')}
+              className="px-6 py-3 bg-gray-900 text-white font-bold rounded-lg w-full md:w-auto disabled:opacity-60 disabled:cursor-wait"
+            >
+              Keep Both
             </button>
+        </div>
+
+        <div className="mt-6 flex flex-col md:flex-row items-center justify-center gap-3">
+          <button
+            onClick={async () => {
+              setIsBulkResolving(true);
+              try {
+                await onResolveAll('keep');
+              } finally {
+                setIsBulkResolving(false);
+              }
+            }}
+            disabled={isBulkResolving}
+            className="px-5 py-3 bg-gray-900 text-white text-sm font-bold rounded-lg w-full md:w-auto disabled:opacity-60 disabled:cursor-wait"
+          >
+            {isBulkResolving ? 'Working...' : 'Resolve All As Keep Original'}
+          </button>
+          <button
+            onClick={async () => {
+              setIsBulkResolving(true);
+              try {
+                await onResolveAll('delete');
+              } finally {
+                setIsBulkResolving(false);
+              }
+            }}
+            disabled={isBulkResolving}
+            className="px-5 py-3 bg-red-600 text-white text-sm font-bold rounded-lg w-full md:w-auto disabled:opacity-60 disabled:cursor-wait"
+          >
+            {isBulkResolving ? 'Working...' : 'Keep Originals, Delete Duplicates'}
+          </button>
         </div>
 
         <div className="text-center mt-6">

@@ -12,16 +12,22 @@ interface ItemWithMetadata extends ReceiptItem {
   id: string; // Internal ID for list management
   receiptId: string;
   storeName: string;
+  storeLocation?: string;
   date: string;
   year: number;
+  month: number;
   itemIndex: number;
 }
 
 const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [subcategoryFilter, setSubcategoryFilter] = useState<string>('all');
+  const [storeFilter, setStoreFilter] = useState<string>('all');
   const [yearFilter, setYearFilter] = useState<number | 'all'>('all');
-  const [sortKey, setSortKey] = useState<'date' | 'price' | 'store' | 'category' | 'quantity'>('date');
+  const [monthFilter, setMonthFilter] = useState<number | 'all'>('all');
+  const [includeTaxes, setIncludeTaxes] = useState(false);
+  const [sortKey, setSortKey] = useState<'date' | 'price' | 'store' | 'category' | 'subcategory' | 'quantity' | 'name'>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
   const [editingReceipt, setEditingReceipt] = useState<Receipt | null>(null);
@@ -30,14 +36,17 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
     const items: ItemWithMetadata[] = [];
     receipts.forEach(r => {
       const receiptDate = new Date(r.date);
+      const month = receiptDate.getMonth();
       r.items.forEach((i, idx) => {
         items.push({
           ...i,
           id: `${r.id}-${idx}`,
           receiptId: r.id,
           storeName: r.storeName,
+          storeLocation: r.storeLocation,
           date: r.date,
           year: receiptDate.getFullYear(),
+          month,
           itemIndex: idx
         });
       });
@@ -51,14 +60,51 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
     return ['all', ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [allItems]);
 
+  const subcategoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    allItems.forEach(i => {
+      if (categoryFilter !== 'all' && i.category !== categoryFilter) return;
+      if (i.subcategory) set.add(i.subcategory);
+    });
+    return ['all', ...Array.from(set).sort((a, b) => a.localeCompare(b))];
+  }, [allItems, categoryFilter]);
+
+  React.useEffect(() => {
+    if (subcategoryFilter !== 'all' && !subcategoryOptions.includes(subcategoryFilter)) {
+      setSubcategoryFilter('all');
+    }
+  }, [subcategoryFilter, subcategoryOptions]);
+
+  const storeOptions = useMemo(() => {
+    const set = new Set<string>();
+    allItems.forEach(i => i.storeName && set.add(i.storeName));
+    return ['all', ...Array.from(set).sort((a, b) => a.localeCompare(b))];
+  }, [allItems]);
+
   const yearOptions = useMemo(() => {
     const set = new Set<number>();
     receipts.forEach(r => {
-      const year = new Date(r.date).getFullYear();
-      if (!isNaN(year)) set.add(year);
+      const yr = new Date(r.date).getFullYear();
+      if (!isNaN(yr) && yr >= 1900) set.add(yr);
     });
     return ['all', ...Array.from(set).sort((a, b) => b - a)] as Array<number | 'all'>;
   }, [receipts]);
+
+  const monthOptions = useMemo(() => {
+    const set = new Set<number>();
+    receipts.forEach(r => {
+      const month = new Date(r.date).getMonth();
+      const yr = new Date(r.date).getFullYear();
+      if (!isNaN(month) && !isNaN(yr) && yr >= 1900) set.add(month);
+    });
+    const months = Array.from(set).sort((a, b) => a - b);
+    return ['all', ...months] as Array<number | 'all'>;
+  }, [receipts]);
+
+  const monthLabel = (m: number | 'all') => {
+    if (m === 'all') return 'All months';
+    return new Date(2000, m, 1).toLocaleString(undefined, { month: 'short' });
+  };
 
   const filteredItems = useMemo(() => {
     const term = searchTerm.toLowerCase();
@@ -69,8 +115,14 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
           item.category?.toLowerCase().includes(term) ||
           item.storeName.toLowerCase().includes(term);
         const matchesCategory = categoryFilter === 'all' ? true : item.category === categoryFilter;
+        const matchesSubcategory = subcategoryFilter === 'all' ? true : item.subcategory === subcategoryFilter;
+        const matchesStore = storeFilter === 'all' ? true : item.storeName === storeFilter;
         const matchesYear = yearFilter === 'all' ? true : item.year === yearFilter;
-        return matchesTerm && matchesCategory && matchesYear;
+        const matchesMonth = monthFilter === 'all' ? true : item.month === monthFilter;
+        const passesTax = includeTaxes
+          ? true
+          : !(item.category?.toLowerCase() === 'fee' && (item.subcategory?.toLowerCase().startsWith('tax') || (item.name || '').toLowerCase().includes('tax')));
+        return matchesTerm && matchesCategory && matchesSubcategory && matchesStore && matchesYear && matchesMonth && passesTax;
       })
       .sort((a, b) => {
         const dir = sortDir === 'asc' ? 1 : -1;
@@ -79,6 +131,10 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
             return dir * a.storeName.localeCompare(b.storeName);
           case 'category':
             return dir * (a.category || '').localeCompare(b.category || '');
+          case 'subcategory':
+            return dir * (a.subcategory || '').localeCompare(b.subcategory || '');
+          case 'name':
+            return dir * a.name.localeCompare(b.name);
           case 'price':
             return dir * ((a.price * a.quantity) - (b.price * b.quantity));
           case 'quantity':
@@ -87,7 +143,16 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
             return dir * (new Date(a.date).getTime() - new Date(b.date).getTime());
         }
       });
-  }, [allItems, categoryFilter, yearFilter, searchTerm, sortDir, sortKey]);
+  }, [allItems, categoryFilter, subcategoryFilter, storeFilter, yearFilter, monthFilter, includeTaxes, searchTerm, sortDir, sortKey]);
+
+  const selectedTotal = useMemo(() => {
+    return filteredItems.reduce((sum, item) => {
+      // Items themselves carry no type; derive sign from receipt type
+      const parent = receipts.find(r => r.id === item.receiptId);
+      const sign = parent?.type === 'refund' ? -1 : 1;
+      return sum + sign * item.price * (item.quantity ?? 1);
+    }, 0);
+  }, [filteredItems, receipts]);
 
   const handleDeleteItem = (item: ItemWithMetadata) => {
     const parent = receipts.find(r => r.id === item.receiptId);
@@ -95,7 +160,7 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
 
     if (window.confirm(`Remove "${item.name}" from your records? This will update the receipt total.`)) {
       const updatedItems = parent.items.filter((_, idx) => idx !== item.itemIndex);
-      const updatedTotal = updatedItems.reduce((sum, i) => sum + (i.price * i.quantity), 0);
+      const updatedTotal = Math.abs(updatedItems.reduce((sum, i) => sum + (i.price * i.quantity), 0));
       
       onUpdateReceipt({
         ...parent,
@@ -117,6 +182,17 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
 
   return (
     <div className="space-y-6 pb-20">
+      <div className="bg-white rounded-2xl sm:rounded-[2.5rem] border border-gray-100 shadow-sm px-4 sm:px-6 py-4 flex items-center justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.2em] text-blue-500">Items</p>
+          <h1 className="text-xl sm:text-2xl font-black text-gray-900">All Tracked Items</h1>
+          <p className="text-xs text-gray-500 font-semibold">Filter, sort, and edit every item across your receipts.</p>
+        </div>
+        <div className="hidden sm:block text-right">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Items in view</p>
+          <p className="text-lg font-black text-gray-900">{filteredItems.length}</p>
+        </div>
+      </div>
       <div className="flex flex-col gap-4">
         <div className="flex flex-col md:flex-row gap-4 items-center">
           <div className="relative flex-1 w-full">
@@ -131,7 +207,7 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </div>
-          <div className="flex items-center gap-2 w-full md:w-auto">
+          <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
@@ -142,12 +218,41 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
               ))}
             </select>
             <select
+              value={subcategoryFilter}
+              onChange={(e) => setSubcategoryFilter(e.target.value)}
+              className="w-full md:w-auto px-4 py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              {subcategoryOptions.map(cat => (
+                <option key={cat} value={cat}>{cat === 'all' ? 'All subcategories' : cat}</option>
+              ))}
+            </select>
+            <select
+              value={storeFilter}
+              onChange={(e) => setStoreFilter(e.target.value)}
+              className="w-full md:w-auto px-4 py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              {storeOptions.map(store => (
+                <option key={store} value={store}>{store === 'all' ? 'All stores' : store}</option>
+              ))}
+            </select>
+            <select
               value={yearFilter}
               onChange={(e) => setYearFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
               className="w-full md:w-auto px-4 py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               {yearOptions.map(year => (
                 <option key={year} value={year}>{year === 'all' ? 'All years' : year}</option>
+              ))}
+            </select>
+            <select
+              value={monthFilter}
+              onChange={(e) => setMonthFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+              className="w-full md:w-auto px-4 py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              {monthOptions.map(month => (
+                <option key={month === 'all' ? 'all' : month} value={month === 'all' ? 'all' : month}>
+                  {monthLabel(month)}
+                </option>
               ))}
             </select>
             <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-2xl px-2 py-1">
@@ -160,7 +265,9 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
                 <option value="price">Total Price</option>
                 <option value="store">Store</option>
                 <option value="category">Category</option>
+                <option value="subcategory">Subcategory</option>
                 <option value="quantity">Quantity</option>
+                <option value="name">Name</option>
               </select>
               <button
                 onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
@@ -170,16 +277,123 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
                 {sortDir === 'asc' ? '↑' : '↓'}
               </button>
             </div>
+            <label className="flex items-center gap-2 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-2xl px-3 py-2">
+              <input
+                type="checkbox"
+                checked={!includeTaxes}
+                onChange={(e) => setIncludeTaxes(!e.target.checked)}
+              />
+              Hide taxes/fees
+            </label>
           </div>
-        </div>
-        <div className="bg-blue-50 px-4 py-2 rounded-xl border border-blue-100 inline-flex w-fit">
-           <span className="text-xs font-black text-blue-600 uppercase tracking-widest">{filteredItems.length} Items Tracked</span>
         </div>
       </div>
 
-      <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+      {/* Mobile stacked cards */}
+      <div className="block md:hidden space-y-3">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4 flex items-center justify-between">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">Filtered total</p>
+          <p className="text-3xl font-black text-gray-900">${selectedTotal.toFixed(2)}</p>
+        </div>
+        <span className="text-sm font-semibold text-gray-600">{filteredItems.length} receipts</span>
+      </div>
+        {filteredItems.length === 0 && (
+          <div className="bg-white rounded-2xl border border-gray-100 p-6 text-center text-gray-400 font-semibold shadow-sm">
+            No matching items tracked
+          </div>
+        )}
+        {filteredItems.map((item) => {
+          const parent = receipts.find(r => r.id === item.receiptId);
+          const sign = parent?.type === 'refund' ? -1 : 1;
+          const lineTotal = sign * item.price * (item.quantity ?? 1);
+          return (
+            <div
+              key={item.id}
+              className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm space-y-3 transition-all hover:border-blue-200 hover:shadow-md hover:-translate-y-0.5"
+            >
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm font-black text-gray-900">{item.name}</p>
+                  <p className="text-[11px] text-gray-400 font-semibold uppercase tracking-widest">Qty: {item.quantity}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-black text-gray-900">{lineTotal < 0 ? '-$' : '$'}{Math.abs(lineTotal).toFixed(2)}</p>
+                  <p className="text-[11px] text-gray-400 font-semibold uppercase tracking-widest">{parent?.type === 'refund' ? 'Refund' : 'Purchase'}</p>
+                </div>
+              </div>
+              <div className="flex justify-between text-xs text-gray-600">
+                <span className="font-semibold">{item.storeName}</span>
+                <span className="text-gray-500">{new Date(item.date).toLocaleDateString()}</span>
+              </div>
+              {item.storeLocation && <p className="text-[11px] text-gray-500">{item.storeLocation}</p>}
+              <div className="flex flex-wrap gap-2">
+                {item.category && (
+                  <button
+                    type="button"
+                    onClick={() => setCategoryFilter(item.category!)}
+                    className="px-2 py-1 text-[10px] font-black uppercase rounded-full bg-blue-50 text-blue-700"
+                  >
+                    {item.category}
+                  </button>
+                )}
+                {item.subcategory && (
+                  <button
+                    type="button"
+                    onClick={() => setSubcategoryFilter(item.subcategory!)}
+                    className="px-2 py-1 text-[10px] font-black uppercase rounded-full bg-indigo-50 text-indigo-700"
+                  >
+                    {item.subcategory}
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => handleViewReceipt(item)}
+                  className="p-2 rounded-lg bg-gray-50 text-gray-600 hover:text-blue-600"
+                  title="View Receipt"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => handleEditItem(item)}
+                  className="p-2 rounded-lg bg-gray-50 text-gray-600 hover:text-indigo-600"
+                  title="Edit"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => handleDeleteItem(item)}
+                  className="p-2 rounded-lg bg-gray-50 text-gray-600 hover:text-red-600"
+                  title="Delete"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-4v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden md:block bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-x-auto pb-3">
+        <div className="min-w-full">
+          <div className="flex items-center justify-between px-6 pt-4 pb-2 sticky top-0 bg-white z-10">
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-gray-400">
+              Selected total
+            </p>
+            <p className="text-base font-black text-gray-900">
+              ${selectedTotal.toFixed(2)}
+            </p>
+          </div>
+          <table className="w-full min-w-[1100px] text-left border-collapse">
             <thead>
               <tr className="bg-gray-50/50">
                 <th className="px-8 py-5 text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Purchased Item</th>
@@ -192,7 +406,10 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
             <tbody className="divide-y divide-gray-50">
               {filteredItems.length > 0 ? (
                 filteredItems.map((item) => (
-                  <tr key={item.id} className="hover:bg-blue-50/30 transition-colors group">
+                  <tr
+                    key={item.id}
+                    className="hover:bg-blue-50/40 hover:shadow-md hover:-translate-y-0.5 transition-all group cursor-pointer"
+                  >
                     <td className="px-8 py-5 cursor-pointer" onClick={() => handleViewReceipt(item)}>
                       <div className="flex flex-col">
                         <span className="text-sm font-black text-gray-900 group-hover:text-blue-600 transition-colors">{item.name}</span>
@@ -202,15 +419,30 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
                     <td className="px-6 py-5 cursor-pointer" onClick={() => handleViewReceipt(item)}>
                       <div className="flex flex-col">
                         <span className="text-xs font-black text-gray-700">{item.storeName}</span>
-                        <span className="text-[10px] text-gray-400 font-bold">{new Date(item.date).toLocaleDateString()}</span>
+                        <span className="text-[10px] text-gray-400 font-bold">
+                          {item.storeLocation ? `${item.storeLocation} • ` : ''}{new Date(item.date).toLocaleDateString()}
+                        </span>
                       </div>
                     </td>
                     <td className="px-6 py-5">
                       <div className="flex flex-wrap gap-1">
                         {item.category && (
-                          <span className="px-2.5 py-1 bg-white text-blue-600 text-[9px] font-black uppercase rounded-lg border border-blue-100 shadow-sm">
+                          <button
+                            type="button"
+                            onClick={() => setCategoryFilter(item.category!)}
+                            className="px-2.5 py-1 bg-white text-blue-600 text-[9px] font-black uppercase rounded-lg border border-blue-100 shadow-sm hover:border-blue-300 hover:text-blue-700 transition-colors"
+                          >
                             {item.category}
-                          </span>
+                          </button>
+                        )}
+                        {item.subcategory && (
+                          <button
+                            type="button"
+                            onClick={() => setSubcategoryFilter(item.subcategory!)}
+                            className="px-2.5 py-1 bg-white text-indigo-600 text-[9px] font-black uppercase rounded-lg border border-indigo-100 shadow-sm hover:border-indigo-300 hover:text-indigo-700 transition-colors"
+                          >
+                            {item.subcategory}
+                          </button>
                         )}
                       </div>
                     </td>
@@ -275,7 +507,12 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[60] flex items-center justify-center p-6">
           <div className="bg-white w-full max-w-lg rounded-[3rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh]">
             <div className="p-8 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-              <h3 className="text-xl font-black text-gray-900 tracking-tight">{selectedReceipt.storeName}</h3>
+              <div>
+                <h3 className="text-xl font-black text-gray-900 tracking-tight">{selectedReceipt.storeName}</h3>
+                {selectedReceipt.storeLocation && (
+                  <p className="text-xs font-semibold text-gray-500">{selectedReceipt.storeLocation}</p>
+                )}
+              </div>
               <button 
                 onClick={() => setSelectedReceipt(null)}
                 className="p-3 hover:bg-gray-200 rounded-2xl transition-all"
@@ -289,7 +526,12 @@ const AllItems: React.FC<AllItemsProps> = ({ receipts, onUpdateReceipt }) => {
               <div className="flex justify-between items-center bg-blue-50/50 p-6 rounded-[2rem]">
                 <div>
                   <p className="text-[10px] font-black uppercase text-blue-400 tracking-widest mb-1">Total Bill</p>
-                  <p className="text-3xl font-black text-blue-600">${selectedReceipt.total.toFixed(2)}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-3xl font-black text-blue-600">{`${selectedReceipt.type === 'refund' ? '-' : ''}$${selectedReceipt.total.toFixed(2)}`}</p>
+                    <span className={`text-[10px] uppercase tracking-wider font-black px-2 py-0.5 rounded-full ${selectedReceipt.type === 'refund' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+                      {selectedReceipt.type === 'refund' ? 'refund' : 'purchase'}
+                    </span>
+                  </div>
                 </div>
                 <div className="text-right">
                   <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1">Date</p>

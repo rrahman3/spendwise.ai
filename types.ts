@@ -5,12 +5,14 @@ export interface ReceiptItem {
   price: number;
   category?: string;
   subcategory?: string;
+  details?: string;
 }
 
 export interface Receipt {
   id: string;
   storeName: string;
   date: string;
+  type?: 'purchase' | 'refund';
   total: number;
   items: ReceiptItem[];
   currency: string;
@@ -18,10 +20,12 @@ export interface Receipt {
   imageUrl?: string;
   createdAt: number;
   time?: string;
+  storeLocation?: string;
   hash?: string;
   source: 'scan' | 'csv' | 'manual';
-  status: 'processed' | 'pending_review';
+  status: 'processed' | 'pending_review' | 'deleted';
   originalReceiptId?: string; // The ID of the receipt it is a duplicate of
+  deletedAt?: number;
 }
 
 export interface UserProfile {
@@ -32,6 +36,7 @@ export interface UserProfile {
   totalSpent: number;
   receiptCount: number;
   isAuthenticated: boolean;
+  plan?: 'free' | 'pro';
 }
 
 export type View = 'dashboard' | 'scan' | 'history' | 'items' | 'stores' | 'chat' | 'profile' | 'upload' | 'review';
